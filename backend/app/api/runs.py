@@ -13,7 +13,7 @@ from app.models.evaluation_run import EvaluationRun
 from app.models.model_config import ModelConfig
 from app.models.task import Task
 from app.models.result import Result
-from app.schemas.run import RunCreate, RunResponse
+from app.schemas.run import BatchRunCreate, RunCreate, RunResponse
 from app.services.dispatcher import RunExecutor
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -99,6 +99,50 @@ async def create_run(run_create: RunCreate, db: AsyncSession = Depends(get_db)):
     asyncio.create_task(executor.execute())
 
     return _run_to_response(run)
+
+
+@router.post("/batch", response_model=list[RunResponse])
+async def create_batch_runs(batch: BatchRunCreate, db: AsyncSession = Depends(get_db)):
+    if not batch.dataset_ids:
+        raise HTTPException(status_code=400, detail="At least one dataset_id is required")
+    if not batch.model_config_ids:
+        raise HTTPException(status_code=400, detail="At least one model_config_id is required")
+
+    # Validate all datasets and models exist up front
+    for dataset_id in batch.dataset_ids:
+        if not await db.get(Dataset, dataset_id):
+            raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
+    for model_config_id in batch.model_config_ids:
+        if not await db.get(ModelConfig, model_config_id):
+            raise HTTPException(status_code=404, detail=f"Model config {model_config_id} not found")
+
+    created_runs: list[EvaluationRun] = []
+    for dataset_id in batch.dataset_ids:
+        dataset = await db.get(Dataset, dataset_id)
+        for model_config_id in batch.model_config_ids:
+            model_config = await db.get(ModelConfig, model_config_id)
+            run = EvaluationRun(
+                name=f"{dataset.name} - {model_config.name}",
+                dataset_id=dataset_id,
+                model_config_id=model_config_id,
+                status="pending",
+                params_override=json.dumps(batch.params_override),
+                total_tasks=0,
+                completed_tasks=0,
+                failed_tasks=0,
+                created_at=datetime.utcnow(),
+            )
+            db.add(run)
+            await db.flush()
+            await db.refresh(run)
+            created_runs.append(run)
+
+    # Fire off executors after all runs are persisted
+    for run in created_runs:
+        executor = RunExecutor(async_session, run.id)
+        asyncio.create_task(executor.execute())
+
+    return [_run_to_response(r) for r in created_runs]
 
 
 @router.get("/{run_id}", response_model=RunResponse)

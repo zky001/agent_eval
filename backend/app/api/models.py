@@ -28,12 +28,17 @@ def _model_to_response(model: ModelConfig) -> ModelConfigResponse:
                 default_params = {}
         else:
             default_params = model.default_params
+    # Mask API key — only expose last 4 chars to confirm one is set
+    masked_key: str | None = None
+    if model.api_key:
+        masked_key = "sk-..." + model.api_key[-4:] if len(model.api_key) > 4 else "****"
+
     return ModelConfigResponse(
         id=model.id,
         name=model.name,
         provider=model.provider,
         api_base_url=model.api_base_url,
-        api_key=model.api_key,
+        api_key=masked_key,
         model_id=model.model_id,
         default_params=default_params,
         created_at=model.created_at,

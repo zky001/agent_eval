@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.evaluation.registry import EvaluatorRegistry
@@ -182,10 +182,12 @@ class RunExecutor:
                 task.status = "completed"
                 task.completed_at = datetime.utcnow()
 
-                # Update run progress
-                run = await db.get(EvaluationRun, self.run_id)
-                if run:
-                    run.completed_tasks = (run.completed_tasks or 0) + 1
+                # Atomically increment completed_tasks to avoid race conditions
+                await db.execute(
+                    update(EvaluationRun)
+                    .where(EvaluationRun.id == self.run_id)
+                    .values(completed_tasks=EvaluationRun.completed_tasks + 1)
+                )
 
                 await db.commit()
 
@@ -201,9 +203,12 @@ class RunExecutor:
                 )
                 db.add(result)
 
-                run = await db.get(EvaluationRun, self.run_id)
-                if run:
-                    run.failed_tasks = (run.failed_tasks or 0) + 1
+                # Atomically increment failed_tasks to avoid race conditions
+                await db.execute(
+                    update(EvaluationRun)
+                    .where(EvaluationRun.id == self.run_id)
+                    .values(failed_tasks=EvaluationRun.failed_tasks + 1)
+                )
 
                 await db.commit()
 
@@ -211,33 +216,20 @@ class RunExecutor:
         evaluator = EvaluatorRegistry.get(dataset_type)
 
         async with self.db_session_factory() as db:
-            # Get all tasks with results for this run
-            tasks_result = await db.execute(
-                select(Task).where(Task.run_id == self.run_id)
-            )
-            tasks = tasks_result.scalars().all()
+            # Single JOIN query to fetch all completed tasks with results and items
+            rows = (await db.execute(
+                select(Task, Result, DatasetItem)
+                .join(Result, Result.task_id == Task.id)
+                .join(DatasetItem, DatasetItem.id == Task.dataset_item_id)
+                .where(Task.run_id == self.run_id)
+                .where(Task.status == "completed")
+                .where(Result.raw_response.isnot(None))
+            )).all()
 
             total_score = 0.0
             scored_count = 0
 
-            for task in tasks:
-                if task.status != "completed":
-                    continue
-
-                # Load result
-                result_query = await db.execute(
-                    select(Result).where(Result.task_id == task.id)
-                )
-                result = result_query.scalar_one_or_none()
-
-                if not result or not result.raw_response:
-                    continue
-
-                # Load dataset item for reference answer
-                dataset_item = await db.get(DatasetItem, task.dataset_item_id)
-                if not dataset_item:
-                    continue
-
+            for task, result, dataset_item in rows:
                 item_metadata = {}
                 if dataset_item.metadata_:
                     if isinstance(dataset_item.metadata_, str):
@@ -266,10 +258,7 @@ class RunExecutor:
             # Update run with aggregate score
             run = await db.get(EvaluationRun, self.run_id)
             if run:
-                if scored_count > 0:
-                    run.aggregate_score = total_score / scored_count
-                else:
-                    run.aggregate_score = 0.0
+                run.aggregate_score = total_score / scored_count if scored_count > 0 else 0.0
                 run.status = "completed"
                 run.completed_at = datetime.utcnow()
 

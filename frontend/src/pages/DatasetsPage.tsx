@@ -189,9 +189,12 @@ const DatasetsPage: React.FC = () => {
             rules={[{ required: true, message: "Please select a source" }]}
           >
             <Select placeholder="Select dataset source">
-              <Select.Option value="gsm8k">GSM8K</Select.Option>
-              <Select.Option value="mmlu">MMLU</Select.Option>
-              <Select.Option value="humaneval">HumanEval</Select.Option>
+              <Select.Option value="tool_use">Tool Use - Agent tool selection & invocation</Select.Option>
+              <Select.Option value="multi_step">Multi-Step Planning - Task decomposition</Select.Option>
+              <Select.Option value="react">ReAct Reasoning - Thought-action-observation</Select.Option>
+              <Select.Option value="instruction_following">Instruction Following - Multi-constraint compliance</Select.Option>
+              <Select.Option value="api_interaction">API Interaction - Correct API call construction</Select.Option>
+              <Select.Option value="error_recovery">Error Recovery - Error handling & adaptation</Select.Option>
             </Select>
           </Form.Item>
           <Form.Item name="split" label="Split">

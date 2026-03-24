@@ -65,10 +65,10 @@ const LeaderboardPage: React.FC = () => {
   const columns = [
     {
       title: "Rank",
-      dataIndex: "rank",
       key: "rank",
       width: 80,
-      render: (rank: number) => {
+      render: (_: unknown, __: LeaderboardEntry, index: number) => {
+        const rank = index + 1;
         const color = medalColors[rank];
         if (color) {
           return (
@@ -149,7 +149,7 @@ const LeaderboardPage: React.FC = () => {
       key: "avg_latency",
       width: 120,
       render: (val: number) =>
-        val !== undefined && val !== null ? `${val.toFixed(2)}s` : "--",
+        val !== undefined && val !== null ? `${(val / 1000).toFixed(2)}s` : "--",
     },
   ];
 

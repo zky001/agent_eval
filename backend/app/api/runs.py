@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, outerjoin
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db, async_session
@@ -166,42 +166,47 @@ async def get_run_tasks(
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    query = select(Task).where(Task.run_id == run_id).order_by(Task.id)
+    # Build a single JOIN query to avoid N+1 queries
+    query = (
+        select(Task, Result, DatasetItem)
+        .outerjoin(Result, Result.task_id == Task.id)
+        .outerjoin(DatasetItem, DatasetItem.id == Task.dataset_item_id)
+        .where(Task.run_id == run_id)
+        .order_by(Task.id)
+    )
     if status is not None:
         query = query.where(Task.status == status)
+    if is_correct is not None:
+        query = query.where(Result.is_correct == is_correct)
 
-    result = await db.execute(query.offset(skip).limit(limit))
-    tasks = result.scalars().all()
+    count_query = (
+        select(func.count(Task.id))
+        .outerjoin(Result, Result.task_id == Task.id)
+        .where(Task.run_id == run_id)
+    )
+    if status is not None:
+        count_query = count_query.where(Task.status == status)
+    if is_correct is not None:
+        count_query = count_query.where(Result.is_correct == is_correct)
 
-    task_responses = []
-    for task in tasks:
-        res_query = await db.execute(select(Result).where(Result.task_id == task.id))
-        task_result = res_query.scalar_one_or_none()
+    total = (await db.execute(count_query)).scalar() or 0
+    rows = (await db.execute(query.offset(skip).limit(limit))).all()
 
-        item = await db.get(DatasetItem, task.dataset_item_id)
-
-        if is_correct is not None and task_result:
-            if task_result.is_correct != is_correct:
-                continue
-
-        response = {
+    task_responses = [
+        {
             "task_id": task.id,
             "item_index": item.item_index if item else 0,
             "prompt": item.prompt if item else "",
             "reference_answer": item.reference_answer if item else None,
             "status": task.status,
-            "raw_response": task_result.raw_response if task_result else None,
-            "parsed_answer": task_result.parsed_answer if task_result else None,
-            "is_correct": task_result.is_correct if task_result else None,
-            "score": task_result.score if task_result else None,
-            "latency_ms": task_result.latency_ms if task_result else None,
+            "raw_response": result.raw_response if result else None,
+            "parsed_answer": result.parsed_answer if result else None,
+            "is_correct": result.is_correct if result else None,
+            "score": result.score if result else None,
+            "latency_ms": result.latency_ms if result else None,
         }
-        task_responses.append(response)
-
-    count_query = select(func.count(Task.id)).where(Task.run_id == run_id)
-    if status is not None:
-        count_query = count_query.where(Task.status == status)
-    total = (await db.execute(count_query)).scalar() or 0
+        for task, result, item in rows
+    ]
 
     return {"tasks": task_responses, "total": total}
 

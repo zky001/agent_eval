@@ -10,6 +10,12 @@ class RunCreate(BaseModel):
     params_override: dict = {}
 
 
+class BatchRunCreate(BaseModel):
+    dataset_ids: list[int]
+    model_config_ids: list[int]
+    params_override: dict = {}
+
+
 class RunResponse(BaseModel):
     id: int
     name: str | None

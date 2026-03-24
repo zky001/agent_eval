@@ -16,6 +16,15 @@ export async function createRun(data: {
   return response.data;
 }
 
+export async function createBatchRuns(data: {
+  dataset_ids: number[];
+  model_config_ids: number[];
+  params_override?: Record<string, unknown>;
+}): Promise<EvaluationRun[]> {
+  const response = await client.post<EvaluationRun[]>("/runs/batch", data);
+  return response.data;
+}
+
 export async function getRun(id: number): Promise<EvaluationRun> {
   const response = await client.get<EvaluationRun>(`/runs/${id}`);
   return response.data;

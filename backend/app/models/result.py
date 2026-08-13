@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, Text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils import utcnow
 
 
 class Result(Base):
@@ -18,6 +17,6 @@ class Result(Base):
     latency_ms = Column(Integer, nullable=True)
     token_count = Column(Integer, nullable=True)
     evaluation_details = Column(Text, default="{}")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     task = relationship("Task", back_populates="result")

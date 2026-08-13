@@ -61,7 +61,9 @@ const ModelsPage: React.FC = () => {
         name: model.name,
         provider: model.provider,
         model_id: model.model_id,
-        api_key: model.api_key || "",
+        // The API returns a masked key; never prefill it into the form or
+        // saving the form would overwrite the real key with the mask.
+        api_key: "",
         api_base_url: model.api_base_url || "",
         default_params: model.default_params
           ? JSON.stringify(model.default_params, null, 2)
@@ -314,8 +316,22 @@ const ModelsPage: React.FC = () => {
             <Input placeholder="e.g., gpt-4-turbo, claude-3-opus-20240229" />
           </Form.Item>
 
-          <Form.Item name="api_key" label="API Key">
-            <Input.Password placeholder="Enter API key" />
+          <Form.Item
+            name="api_key"
+            label="API Key"
+            extra={
+              editingModel?.api_key
+                ? `当前已配置 (${editingModel.api_key})，留空则保持不变`
+                : undefined
+            }
+          >
+            <Input.Password
+              placeholder={
+                editingModel?.api_key
+                  ? "留空保持现有 API Key"
+                  : "Enter API key"
+              }
+            />
           </Form.Item>
 
           {(selectedProvider === "local" || selectedProvider === "") && (

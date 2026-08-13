@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,6 +11,11 @@ from app.api.runs import router as runs_router
 from app.config import settings
 from app.database import init_db
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -19,7 +25,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Agent Evaluation Platform",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -40,3 +46,8 @@ app.include_router(leaderboard_router, prefix="/api")
 @app.get("/")
 async def root():
     return {"message": "Agent Evaluation Platform API"}
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}

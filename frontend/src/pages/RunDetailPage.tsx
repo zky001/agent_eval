@@ -33,6 +33,19 @@ const statusColors: Record<string, string> = {
   cancelled: "warning",
 };
 
+const expandedBlockStyle: React.CSSProperties = {
+  margin: "4px 0 0",
+  padding: 8,
+  background: "#fafafa",
+  border: "1px solid #f0f0f0",
+  borderRadius: 4,
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  maxHeight: 300,
+  overflow: "auto",
+  fontSize: 12,
+};
+
 const RunDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -299,10 +312,10 @@ const RunDetailPage: React.FC = () => {
 
         <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }}>
           <Descriptions.Item label="Dataset">
-            {run.dataset_id}
+            {run.dataset_name || `#${run.dataset_id}`}
           </Descriptions.Item>
           <Descriptions.Item label="Model">
-            {run.model_config_id}
+            {run.model_name || `#${run.model_config_id}`}
           </Descriptions.Item>
           <Descriptions.Item label="Status">
             <Tag color={statusColors[run.status] || "default"}>
@@ -331,6 +344,21 @@ const RunDetailPage: React.FC = () => {
           <Descriptions.Item label="Score">
             {run.aggregate_score !== undefined && run.aggregate_score !== null
               ? `${(run.aggregate_score * 100).toFixed(1)}%`
+              : "--"}
+          </Descriptions.Item>
+          <Descriptions.Item label="Correct">
+            {run.correct_tasks !== undefined && run.correct_tasks !== null
+              ? `${run.correct_tasks} / ${run.total_tasks}`
+              : "--"}
+          </Descriptions.Item>
+          <Descriptions.Item label="Avg Latency">
+            {run.avg_latency_ms !== undefined && run.avg_latency_ms !== null
+              ? `${Math.round(run.avg_latency_ms)}ms`
+              : "--"}
+          </Descriptions.Item>
+          <Descriptions.Item label="Tokens">
+            {run.total_tokens !== undefined && run.total_tokens !== null
+              ? run.total_tokens.toLocaleString()
               : "--"}
           </Descriptions.Item>
           <Descriptions.Item label="Started">
@@ -376,6 +404,47 @@ const RunDetailPage: React.FC = () => {
           rowKey="task_id"
           loading={tasksLoading}
           scroll={{ x: 1000 }}
+          expandable={{
+            expandedRowRender: (record: TaskResult) => (
+              <div style={{ display: "grid", gap: 12 }}>
+                <div>
+                  <Typography.Text strong>Prompt</Typography.Text>
+                  <pre style={expandedBlockStyle}>{record.prompt || "--"}</pre>
+                </div>
+                {record.reference_answer && (
+                  <div>
+                    <Typography.Text strong>Reference Answer</Typography.Text>
+                    <pre style={expandedBlockStyle}>
+                      {record.reference_answer}
+                    </pre>
+                  </div>
+                )}
+                <div>
+                  <Typography.Text strong>Model Response</Typography.Text>
+                  <pre style={expandedBlockStyle}>
+                    {record.raw_response || "--"}
+                  </pre>
+                </div>
+                {record.parsed_answer && (
+                  <div>
+                    <Typography.Text strong>Parsed Answer</Typography.Text>
+                    <pre style={expandedBlockStyle}>{record.parsed_answer}</pre>
+                  </div>
+                )}
+                {record.evaluation_details &&
+                  Object.keys(record.evaluation_details).length > 0 && (
+                    <div>
+                      <Typography.Text strong>
+                        Evaluation Details
+                      </Typography.Text>
+                      <pre style={expandedBlockStyle}>
+                        {JSON.stringify(record.evaluation_details, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+              </div>
+            ),
+          }}
           pagination={{
             current: page,
             pageSize: pageSize,

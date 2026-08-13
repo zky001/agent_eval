@@ -13,16 +13,20 @@ class ReActEvaluator(BaseEvaluator):
         Returns a JSON string with ``"thoughts"``, ``"actions"``,
         ``"observations"``, and ``"final_action"`` fields.
         """
+        # The terminating "$" must be an alternative to the "\n<keyword>"
+        # lookahead, not part of it: responses usually END with the final
+        # "Action: ..." and have no trailing newline, and requiring one
+        # dropped the final action entirely.
         thought_pattern = re.compile(
-            r"(?:^|\n)\s*Thought\s*[\d]*\s*[:]\s*(.*?)(?=\n\s*(?:Action|Observation|Thought|$))",
+            r"(?:^|\n)\s*Thought\s*[\d]*\s*[:]\s*(.*?)(?=\n\s*(?:Action|Observation|Thought)|$)",
             re.IGNORECASE | re.DOTALL,
         )
         action_pattern = re.compile(
-            r"(?:^|\n)\s*Action\s*[\d]*\s*[:]\s*(.*?)(?=\n\s*(?:Thought|Observation|Action|$))",
+            r"(?:^|\n)\s*Action\s*[\d]*\s*[:]\s*(.*?)(?=\n\s*(?:Thought|Observation|Action)|$)",
             re.IGNORECASE | re.DOTALL,
         )
         observation_pattern = re.compile(
-            r"(?:^|\n)\s*Observation\s*[\d]*\s*[:]\s*(.*?)(?=\n\s*(?:Thought|Action|Observation|$))",
+            r"(?:^|\n)\s*Observation\s*[\d]*\s*[:]\s*(.*?)(?=\n\s*(?:Thought|Action|Observation)|$)",
             re.IGNORECASE | re.DOTALL,
         )
 

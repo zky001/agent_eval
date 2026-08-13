@@ -6,10 +6,11 @@
 
 - **多数据集支持**：内置 9 种评估数据集类型，涵盖工具调用、多步规划、ReAct 推理等 Agent 核心能力
 - **多模型评估**：支持 OpenAI、Anthropic 等主流 LLM 提供商，可同时对比多个模型表现
-- **异步并发执行**：最多 10 个任务并行执行，高效完成大规模评估
-- **详细评估报告**：每条评估结果包含原始响应、解析答案、得分及详细评估信息
-- **排行榜系统**：按数据集筛选，直观对比各模型综合表现
-- **完整 Web 界面**：基于 React + Ant Design 的现代化管理界面
+- **异步并发执行**：全局并发上限（默认 10，可配置）跨所有运行生效；HTTP 连接池复用，429/5xx/超时自动指数退避重试
+- **详细评估报告**：每条评估结果包含原始响应、解析答案、得分、Token 用量及详细评估信息
+- **排行榜系统**：按数据集筛选，每次运行等权重聚合，直观对比各模型综合表现
+- **完整 Web 界面**：基于 React + Ant Design 的现代化管理界面，运行中自动刷新进度
+- **测试覆盖**：评估器、LLM 客户端与 API 全链路的 pytest 测试套件（`make test`）
 
 ## 支持的评估类型
 
@@ -76,6 +77,12 @@ make backend
 make frontend
 ```
 
+### 运行测试
+
+```bash
+make test
+```
+
 ### 清理
 
 ```bash
@@ -117,23 +124,31 @@ API Key: sk-...
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `AGENT_EVAL_DATABASE_URL` | `./data/agent_eval.db` | SQLite 数据库路径 |
-| `AGENT_EVAL_MAX_CONCURRENT_TASKS` | `10` | 最大并发评估任务数 |
+| `AGENT_EVAL_MAX_CONCURRENT_TASKS` | `10` | 全局最大并发 LLM 调用数（跨所有运行） |
 | `AGENT_EVAL_CORS_ORIGINS` | `http://localhost:5173` | 允许的 CORS 来源 |
+| `AGENT_EVAL_LLM_TIMEOUT_SECONDS` | `120` | 单次 LLM 请求超时（也可在参数中传 `timeout` 覆盖） |
+| `AGENT_EVAL_LLM_MAX_RETRIES` | `3` | 遇到 429/5xx/超时时的最大重试次数（指数退避） |
+| `AGENT_EVAL_CODE_EXEC_TIMEOUT_SECONDS` | `5` | HumanEval 代码执行沙箱超时 |
+
+模型参数（`default_params` / 运行时 `params_override`）中还支持两个客户端级别的键：`system`（系统提示词，OpenAI 转为 system 消息，Anthropic 转为顶层 `system` 字段）和 `timeout`（单次请求超时秒数），它们不会透传给提供商 API。
+
+安全说明：API 返回的模型配置只包含掩码后的 API Key（如 `sk-...abcd`）；更新模型时提交空值或掩码值均会保留原 Key 不变。
 
 ## 项目结构
 
 ```
 agent_eval/
 ├── backend/
-│   └── app/
-│       ├── api/            # REST API 路由
-│       ├── evaluation/     # 评估器模块
-│       ├── models/         # 数据库 ORM 模型
-│       ├── schemas/        # Pydantic 请求/响应模型
-│       ├── services/       # 评估任务调度 & LLM 客户端
-│       ├── config.py       # 配置管理
-│       ├── database.py     # 数据库初始化
-│       └── main.py         # FastAPI 应用入口
+│   ├── app/
+│   │   ├── api/            # REST API 路由
+│   │   ├── evaluation/     # 评估器模块
+│   │   ├── models/         # 数据库 ORM 模型
+│   │   ├── schemas/        # Pydantic 请求/响应模型
+│   │   ├── services/       # 评估任务调度 & LLM 客户端
+│   │   ├── config.py       # 配置管理
+│   │   ├── database.py     # 数据库初始化
+│   │   └── main.py         # FastAPI 应用入口
+│   └── tests/              # pytest 测试套件
 ├── frontend/
 │   └── src/
 │       ├── api/            # 前端 API 请求层

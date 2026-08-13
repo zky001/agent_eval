@@ -11,9 +11,16 @@ from app.schemas.model_config import (
     ModelConfigUpdate,
     ModelTestResponse,
 )
-from app.schemas.run import ResultResponse, RunCreate, RunResponse, TaskResponse
+from app.schemas.run import (
+    BatchRunCreate,
+    ResultResponse,
+    RunCreate,
+    RunResponse,
+    TaskResponse,
+)
 
 __all__ = [
+    "BatchRunCreate",
     "DatasetImportRequest",
     "DatasetItemResponse",
     "DatasetResponse",

@@ -2,11 +2,12 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.dataset import Dataset, DatasetItem
+from app.models.evaluation_run import EvaluationRun
 from app.schemas.dataset import (
     DatasetImportRequest,
     DatasetItemResponse,
@@ -691,5 +692,20 @@ async def delete_dataset(dataset_id: int, db: AsyncSession = Depends(get_db)):
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    await db.delete(dataset)
+    run_count = (
+        await db.execute(
+            select(func.count(EvaluationRun.id)).where(
+                EvaluationRun.dataset_id == dataset_id
+            )
+        )
+    ).scalar() or 0
+    if run_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Dataset has {run_count} evaluation run(s); delete those runs first",
+        )
+
+    # Bulk delete items instead of loading them all through the ORM cascade.
+    await db.execute(delete(DatasetItem).where(DatasetItem.dataset_id == dataset_id))
+    await db.execute(delete(Dataset).where(Dataset.id == dataset_id))
     return {"detail": "Dataset deleted"}

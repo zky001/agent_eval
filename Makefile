@@ -1,4 +1,4 @@
-.PHONY: dev backend frontend install install-backend install-frontend clean
+.PHONY: dev backend frontend install install-backend install-frontend test clean
 
 # Run both backend and frontend concurrently
 dev: install
@@ -25,6 +25,10 @@ install-backend:
 # Install frontend dependencies
 install-frontend:
 	cd frontend && npm install
+
+# Run backend tests
+test: install-backend
+	cd backend && python -m pytest tests/ -q
 
 # Clean generated files
 clean:

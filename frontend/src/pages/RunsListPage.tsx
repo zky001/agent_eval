@@ -34,21 +34,31 @@ const RunsListPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [runs, setRuns] = useState<EvaluationRun[]>([]);
 
-  const fetchRuns = async () => {
-    setLoading(true);
+  const fetchRuns = async (showSpinner = true) => {
+    if (showSpinner) setLoading(true);
     try {
       const data = await listRuns();
       setRuns(data);
     } catch {
       message.error("Failed to load evaluation runs");
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchRuns();
   }, []);
+
+  // Poll quietly while any run is still pending/running
+  const hasActiveRuns = runs.some(
+    (r) => r.status === "running" || r.status === "pending"
+  );
+  useEffect(() => {
+    if (!hasActiveRuns) return;
+    const timer = setInterval(() => fetchRuns(false), 4000);
+    return () => clearInterval(timer);
+  }, [hasActiveRuns]);
 
   const handleCancel = async (id: number) => {
     try {
@@ -83,13 +93,17 @@ const RunsListPage: React.FC = () => {
     },
     {
       title: "Dataset",
-      dataIndex: "dataset_id",
-      key: "dataset_id",
+      dataIndex: "dataset_name",
+      key: "dataset_name",
+      render: (name: string | undefined, record: EvaluationRun) =>
+        name || `#${record.dataset_id}`,
     },
     {
       title: "Model",
-      dataIndex: "model_config_id",
-      key: "model_config_id",
+      dataIndex: "model_name",
+      key: "model_name",
+      render: (name: string | undefined, record: EvaluationRun) =>
+        name || `#${record.model_config_id}`,
     },
     {
       title: "Status",

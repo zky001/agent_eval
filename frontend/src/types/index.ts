@@ -33,11 +33,16 @@ export interface EvaluationRun {
   name?: string;
   dataset_id: number;
   model_config_id: number;
+  dataset_name?: string;
+  model_name?: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   total_tasks: number;
   completed_tasks: number;
   failed_tasks: number;
   aggregate_score?: number;
+  correct_tasks?: number;
+  avg_latency_ms?: number;
+  total_tokens?: number;
   params_override?: Record<string, unknown>;
   started_at?: string;
   completed_at?: string;
@@ -55,6 +60,8 @@ export interface TaskResult {
   is_correct?: boolean;
   score?: number;
   latency_ms?: number;
+  token_count?: number;
+  evaluation_details?: Record<string, unknown>;
   status: string;
 }
 

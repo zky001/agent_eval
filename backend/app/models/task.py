@@ -8,9 +8,9 @@ class Task(Base):
     __tablename__ = "tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    run_id = Column(Integer, ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False)
+    run_id = Column(Integer, ForeignKey("evaluation_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     dataset_item_id = Column(Integer, ForeignKey("dataset_items.id"), nullable=False)
-    status = Column(String, default="pending", nullable=False)
+    status = Column(String, default="pending", nullable=False, index=True)
     dispatched_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 

@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, Integer, String, Text
 
 from app.database import Base
+from app.utils import utcnow
 
 
 class ModelConfig(Base):
@@ -15,5 +14,5 @@ class ModelConfig(Base):
     api_key = Column(String, nullable=True)
     model_id = Column(String, nullable=False)
     default_params = Column(Text, default="{}")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

@@ -1,9 +1,8 @@
-from datetime import datetime
-
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+from app.utils import utcnow
 
 
 class Dataset(Base):
@@ -16,7 +15,7 @@ class Dataset(Base):
     source_path = Column(String, nullable=True)
     total_items = Column(Integer, default=0)
     metadata_ = Column("metadata_", Text, default="{}")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
 
     items = relationship("DatasetItem", back_populates="dataset", cascade="all, delete-orphan")
     evaluation_runs = relationship("EvaluationRun", back_populates="dataset")
@@ -26,7 +25,7 @@ class DatasetItem(Base):
     __tablename__ = "dataset_items"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
     item_index = Column(Integer, nullable=False)
     prompt = Column(Text, nullable=False)
     reference_answer = Column(Text, nullable=True)

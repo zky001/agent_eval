@@ -6,13 +6,25 @@ from app.evaluation.base import BaseEvaluator, EvalResult
 
 class GSM8KEvaluator(BaseEvaluator):
     def parse_answer(self, raw_response: str, metadata: dict | None = None) -> str:
-        # Look for #### pattern first
+        # Look for #### pattern first (GSM8K convention)
         match = re.search(r"####\s*(-?[\d,]+\.?\d*)", raw_response)
         if match:
             return match.group(1).replace(",", "")
 
+        # LaTeX \boxed{...} is a common convention for final answers
+        match = re.search(r"\\boxed\{\s*(-?[\d,]+\.?\d*)\s*\}", raw_response)
+        if match:
+            return match.group(1).replace(",", "")
+
+        # "The answer is 42" style statements
+        match = re.search(
+            r"answer\s*(?:is|=|:)\s*\$?(-?[\d,]+\.?\d*)", raw_response, re.IGNORECASE
+        )
+        if match:
+            return match.group(1).replace(",", "")
+
         # Fall back to last number in the response
-        numbers = re.findall(r"-?[\d,]+\.?\d*", raw_response)
+        numbers = re.findall(r"-?\d[\d,]*\.?\d*", raw_response)
         if numbers:
             return numbers[-1].replace(",", "")
 

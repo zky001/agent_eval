@@ -21,6 +21,8 @@ class RunResponse(BaseModel):
     name: str | None
     dataset_id: int
     model_config_id: int
+    dataset_name: str | None = None
+    model_name: str | None = None
     status: str
     params_override: dict = {}
     total_tasks: int
@@ -31,6 +33,10 @@ class RunResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     error_message: str | None
+    # Detail-only aggregate stats (None in list responses)
+    correct_tasks: int | None = None
+    avg_latency_ms: float | None = None
+    total_tokens: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

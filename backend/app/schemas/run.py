@@ -7,12 +7,14 @@ class RunCreate(BaseModel):
     name: str | None = None
     dataset_id: int
     model_config_id: int
+    judge_model_config_id: int | None = None
     params_override: dict = {}
 
 
 class BatchRunCreate(BaseModel):
     dataset_ids: list[int]
     model_config_ids: list[int]
+    judge_model_config_id: int | None = None
     params_override: dict = {}
 
 
@@ -21,6 +23,7 @@ class RunResponse(BaseModel):
     name: str | None
     dataset_id: int
     model_config_id: int
+    judge_model_config_id: int | None = None
     dataset_name: str | None = None
     model_name: str | None = None
     status: str

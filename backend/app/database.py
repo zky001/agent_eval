@@ -64,9 +64,21 @@ _INDEX_DDL = [
     "CREATE INDEX IF NOT EXISTS ix_evaluation_runs_status ON evaluation_runs (status)",
 ]
 
+# Columns added after the initial release; create_all does not ALTER existing
+# tables, so databases created by older versions get them here.
+_COLUMN_MIGRATIONS = [
+    ("evaluation_runs", "judge_model_config_id", "INTEGER REFERENCES model_configs(id)"),
+]
+
 
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        for table, column, ddl_type in _COLUMN_MIGRATIONS:
+            existing = await conn.execute(text(f"PRAGMA table_info({table})"))
+            if column not in {row[1] for row in existing}:
+                await conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+                )
         for ddl in _INDEX_DDL:
             await conn.execute(text(ddl))

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 class DatasetImportRequest(BaseModel):
     source: str
+    origin: str = "sample"  # "sample" (built-in) or "huggingface"
     split: str = "test"
     subset: str | None = None
     max_items: int | None = None
@@ -14,6 +15,14 @@ class DatasetUploadItem(BaseModel):
     prompt: str
     reference_answer: str | None = None
     metadata: dict = {}
+
+
+class DatasetUploadRequest(BaseModel):
+    name: str
+    dataset_type: str = "custom"
+    description: str | None = None
+    system_prompt: str | None = None
+    items: list[DatasetUploadItem]
 
 
 class DatasetResponse(BaseModel):

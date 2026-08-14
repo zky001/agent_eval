@@ -1,8 +1,11 @@
+import csv
+import io
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session, get_db
@@ -40,6 +43,7 @@ def _run_to_response(
         name=run.name,
         dataset_id=run.dataset_id,
         model_config_id=run.model_config_id,
+        judge_model_config_id=run.judge_model_config_id,
         dataset_name=dataset_name,
         model_name=model_name,
         status=run.status,
@@ -86,6 +90,24 @@ async def list_runs(
     ]
 
 
+async def _resolve_judge_id(
+    db: AsyncSession, dataset: Dataset, judge_model_config_id: int | None
+) -> int | None:
+    """llm_judge datasets require a judge model; other types ignore it."""
+    if dataset.dataset_type != "llm_judge":
+        return None
+    if not judge_model_config_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Dataset '{dataset.name}' is of type llm_judge and requires a judge_model_config_id",
+        )
+    if not await db.get(ModelConfig, judge_model_config_id):
+        raise HTTPException(
+            status_code=404, detail=f"Judge model config {judge_model_config_id} not found"
+        )
+    return judge_model_config_id
+
+
 @router.post("/", response_model=RunResponse)
 async def create_run(run_create: RunCreate, db: AsyncSession = Depends(get_db)):
     dataset = await db.get(Dataset, run_create.dataset_id)
@@ -96,10 +118,13 @@ async def create_run(run_create: RunCreate, db: AsyncSession = Depends(get_db)):
     if not model_config:
         raise HTTPException(status_code=404, detail="Model config not found")
 
+    judge_id = await _resolve_judge_id(db, dataset, run_create.judge_model_config_id)
+
     run = EvaluationRun(
         name=run_create.name or f"{dataset.name} - {model_config.name}",
         dataset_id=run_create.dataset_id,
         model_config_id=run_create.model_config_id,
+        judge_model_config_id=judge_id,
         status="pending",
         params_override=json.dumps(run_create.params_override),
         total_tasks=0,
@@ -143,11 +168,13 @@ async def create_batch_runs(batch: BatchRunCreate, db: AsyncSession = Depends(ge
     params_json = json.dumps(batch.params_override)
     created: list[tuple[EvaluationRun, str, str]] = []
     for dataset_id, dataset in datasets.items():
+        judge_id = await _resolve_judge_id(db, dataset, batch.judge_model_config_id)
         for model_config_id, model_config in model_configs.items():
             run = EvaluationRun(
                 name=f"{dataset.name} - {model_config.name}",
                 dataset_id=dataset_id,
                 model_config_id=model_config_id,
+                judge_model_config_id=judge_id,
                 status="pending",
                 params_override=params_json,
                 total_tasks=0,
@@ -167,6 +194,78 @@ async def create_batch_runs(batch: BatchRunCreate, db: AsyncSession = Depends(ge
         _run_to_response(run, dataset_name=ds_name, model_name=mc_name)
         for run, ds_name, mc_name in created
     ]
+
+
+# NOTE: declared before "/{run_id}" — otherwise the int path converter
+# swallows "compare-items" and returns 422.
+@router.get("/compare-items")
+async def compare_run_items(
+    run_ids: str = Query(..., description="Comma-separated run IDs (2-4)"),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        ids = list(dict.fromkeys(int(x.strip()) for x in run_ids.split(",") if x.strip()))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="run_ids must be integers")
+    if not 2 <= len(ids) <= 4:
+        raise HTTPException(status_code=400, detail="Provide between 2 and 4 distinct run IDs")
+
+    rows = (
+        await db.execute(
+            select(EvaluationRun, Dataset.name, ModelConfig.name)
+            .outerjoin(Dataset, Dataset.id == EvaluationRun.dataset_id)
+            .outerjoin(ModelConfig, ModelConfig.id == EvaluationRun.model_config_id)
+            .where(EvaluationRun.id.in_(ids))
+        )
+    ).all()
+    runs_by_id = {run.id: (run, ds_name, mc_name) for run, ds_name, mc_name in rows}
+    missing = [i for i in ids if i not in runs_by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Run(s) not found: {missing}")
+
+    dataset_ids = {run.dataset_id for run, _, _ in runs_by_id.values()}
+    if len(dataset_ids) > 1:
+        raise HTTPException(
+            status_code=400, detail="Runs must belong to the same dataset to be compared"
+        )
+
+    task_rows = (
+        await db.execute(
+            select(Task, Result, DatasetItem)
+            .outerjoin(Result, Result.task_id == Task.id)
+            .join(DatasetItem, DatasetItem.id == Task.dataset_item_id)
+            .where(Task.run_id.in_(ids))
+            .order_by(DatasetItem.item_index)
+        )
+    ).all()
+
+    items: dict[int, dict] = {}
+    for task, result, item in task_rows:
+        entry = items.setdefault(
+            item.item_index,
+            {
+                "item_index": item.item_index,
+                "prompt": item.prompt,
+                "reference_answer": item.reference_answer,
+                "results": {},
+            },
+        )
+        entry["results"][str(task.run_id)] = {
+            "status": task.status,
+            "raw_response": result.raw_response if result else None,
+            "parsed_answer": result.parsed_answer if result else None,
+            "is_correct": result.is_correct if result else None,
+            "score": result.score if result else None,
+            "latency_ms": result.latency_ms if result else None,
+        }
+
+    return {
+        "runs": [
+            _run_to_response(run, dataset_name=ds_name, model_name=mc_name)
+            for run, ds_name, mc_name in (runs_by_id[i] for i in ids)
+        ],
+        "items": [items[k] for k in sorted(items)],
+    }
 
 
 @router.get("/{run_id}", response_model=RunResponse)
@@ -275,6 +374,116 @@ async def cancel_run(run_id: int, db: AsyncSession = Depends(get_db)):
     run.status = "cancelled"
     run.completed_at = utcnow()
     return {"detail": "Run cancelled"}
+
+
+@router.post("/{run_id}/retry", response_model=RunResponse)
+async def retry_failed_tasks(run_id: int, db: AsyncSession = Depends(get_db)):
+    """Reset failed/cancelled tasks to pending and re-run them."""
+    run = await db.get(EvaluationRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status in ("pending", "running"):
+        raise HTTPException(status_code=400, detail="Run is still executing")
+
+    retryable_ids = (
+        (
+            await db.execute(
+                select(Task.id)
+                .where(Task.run_id == run_id)
+                .where(Task.status.in_(["failed", "cancelled", "pending"]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not retryable_ids:
+        raise HTTPException(status_code=400, detail="No failed or cancelled tasks to retry")
+
+    await db.execute(delete(Result).where(Result.task_id.in_(retryable_ids)))
+    await db.execute(
+        sa_update(Task)
+        .where(Task.id.in_(retryable_ids))
+        .values(status="pending", dispatched_at=None, completed_at=None)
+    )
+
+    completed_count = (
+        await db.execute(
+            select(func.count(Task.id))
+            .where(Task.run_id == run_id)
+            .where(Task.status == "completed")
+        )
+    ).scalar() or 0
+
+    run.status = "pending"
+    run.completed_tasks = completed_count
+    run.failed_tasks = 0
+    run.error_message = None
+    run.completed_at = None
+    run.aggregate_score = None
+    await db.commit()
+
+    spawn_run(async_session, run.id)
+    return _run_to_response(run)
+
+
+@router.get("/{run_id}/export")
+async def export_run_results(run_id: int, db: AsyncSession = Depends(get_db)):
+    """Download all task results of a run as CSV."""
+    run = await db.get(EvaluationRun, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    rows = (
+        await db.execute(
+            select(Task, Result, DatasetItem)
+            .outerjoin(Result, Result.task_id == Task.id)
+            .outerjoin(DatasetItem, DatasetItem.id == Task.dataset_item_id)
+            .where(Task.run_id == run_id)
+            .order_by(Task.id)
+        )
+    ).all()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "item_index",
+            "prompt",
+            "reference_answer",
+            "status",
+            "raw_response",
+            "parsed_answer",
+            "is_correct",
+            "score",
+            "latency_ms",
+            "token_count",
+            "evaluation_details",
+        ]
+    )
+    for task, result, item in rows:
+        writer.writerow(
+            [
+                item.item_index if item else "",
+                item.prompt if item else "",
+                item.reference_answer if item else "",
+                task.status,
+                (result.raw_response if result else "") or "",
+                (result.parsed_answer if result else "") or "",
+                "" if not result or result.is_correct is None else result.is_correct,
+                "" if not result or result.score is None else result.score,
+                "" if not result or result.latency_ms is None else result.latency_ms,
+                "" if not result or result.token_count is None else result.token_count,
+                (result.evaluation_details if result else "") or "",
+            ]
+        )
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="run_{run_id}_results.csv"'
+        },
+    )
 
 
 @router.delete("/{run_id}")

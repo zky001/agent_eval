@@ -12,8 +12,9 @@ from app.schemas.dataset import (
     DatasetImportRequest,
     DatasetItemResponse,
     DatasetResponse,
-    DatasetUploadItem,
+    DatasetUploadRequest,
 )
+from app.services.hf_datasets import HF_SOURCES, HFImportError, fetch_hf_samples
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -512,6 +513,57 @@ def _generate_error_recovery_samples() -> list[dict]:
     ]
 
 
+def _generate_llm_judge_samples() -> list[dict]:
+    """Open-ended tasks graded by a judge model against a rubric."""
+    return [
+        {
+            "prompt": "Explain what an API is to a middle-school student, in one paragraph.",
+            "reference_answer": (
+                "Rubric: technically accurate; uses an age-appropriate analogy "
+                "(e.g. waiter, mailbox); single paragraph; no unexplained jargon."
+            ),
+            "metadata": {"pass_threshold": 0.7},
+        },
+        {
+            "prompt": "Write a professional apology email to a customer whose order arrived two weeks late. Offer a concrete remedy.",
+            "reference_answer": (
+                "Rubric: apologizes clearly and takes responsibility; professional "
+                "tone; mentions the delay; offers a concrete remedy (refund, "
+                "discount, or expedited replacement); has greeting and sign-off."
+            ),
+            "metadata": {"pass_threshold": 0.7},
+        },
+        {
+            "prompt": "You are on-call and a production deploy just caused a 500-error spike. Describe, step by step, what you do in the first 15 minutes.",
+            "reference_answer": (
+                "Rubric: prioritizes mitigation (rollback/feature-flag) before "
+                "root-causing; mentions checking monitoring/logs; communicates "
+                "with stakeholders; steps are in a sensible order."
+            ),
+            "metadata": {"pass_threshold": 0.7},
+        },
+        {
+            "prompt": "Summarize the trade-offs between SQL and NoSQL databases for a startup choosing its first database.",
+            "reference_answer": (
+                "Rubric: covers schema flexibility, consistency/transactions, "
+                "scaling, ecosystem maturity; balanced rather than one-sided; "
+                "gives startup-relevant guidance."
+            ),
+            "metadata": {"pass_threshold": 0.7},
+        },
+        {
+            "prompt": "A junior developer asks why their code review was rejected for using a global variable. Explain the reasoning kindly and suggest an alternative.",
+            "reference_answer": (
+                "Rubric: kind, non-condescending tone; explains concrete problems "
+                "with globals (hidden coupling, testing difficulty, thread "
+                "safety); proposes at least one alternative (dependency "
+                "injection, function parameters, class state)."
+            ),
+            "metadata": {"pass_threshold": 0.7},
+        },
+    ]
+
+
 SAMPLE_GENERATORS = {
     "gsm8k": (_generate_gsm8k_samples, "Grade School Math 8K - sample problems"),
     "mmlu": (_generate_mmlu_samples, "Massive Multitask Language Understanding - sample questions"),
@@ -522,6 +574,24 @@ SAMPLE_GENERATORS = {
     "instruction_following": (_generate_instruction_following_samples, "Instruction Following - Multi-constraint compliance"),
     "api_interaction": (_generate_api_interaction_samples, "API Interaction - Correct API call construction"),
     "error_recovery": (_generate_error_recovery_samples, "Error Recovery - Error handling & adaptation"),
+    "llm_judge": (_generate_llm_judge_samples, "LLM-as-Judge - open-ended tasks scored by a judge model"),
+}
+
+# Appended to sample prompts at import time. The rule-based evaluators parse
+# specific formats; without telling the model which format to use, parsing
+# fails on perfectly good answers and scores are meaninglessly low.
+FORMAT_INSTRUCTIONS = {
+    "gsm8k": "\n\nEnd your response with the final numeric answer in the form: #### <number>",
+    "mmlu": "\n\nRespond with the letter of the correct option in the form: Answer: <letter>",
+    "humaneval": "\n\nReturn the complete function implementation in a ```python code block.",
+    "tool_use": '\n\nRespond with ONLY a JSON object in the form: {"tool_name": "<tool>", "parameters": {<key>: <value>}}',
+    "multi_step": "\n\nRespond with a numbered list of steps, one per line, in the form: 1. <step>",
+    "react": (
+        "\n\nUse exactly this line format, repeating as needed, and end with your final Action:\n"
+        "Thought: <reasoning>\nAction: <tool call>\nObservation: <result>"
+    ),
+    "api_interaction": '\n\nRespond with ONLY a JSON object in the form: {"method": "<verb>", "endpoint": "<url>", "headers": {...}, "body": <json or null>}',
+    "error_recovery": "\n\nStructure your response as three lines:\nDiagnosis: <root cause>\nFix: <the change to make>\nExplanation: <why this fixes it>",
 }
 
 
@@ -565,68 +635,15 @@ async def list_datasets(db: AsyncSession = Depends(get_db)):
     return [_dataset_to_response(d) for d in datasets]
 
 
-@router.post("/import", response_model=DatasetResponse)
-async def import_dataset(request: DatasetImportRequest, db: AsyncSession = Depends(get_db)):
-    source = request.source.lower()
-
-    if source not in SAMPLE_GENERATORS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown dataset source: {request.source}. Available: {list(SAMPLE_GENERATORS.keys())}",
-        )
-
-    # Check if dataset already exists
-    existing = await db.execute(select(Dataset).where(Dataset.name == source))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail=f"Dataset '{source}' already exists")
-
-    generator_fn, description = SAMPLE_GENERATORS[source]
-    samples = generator_fn()
-
-    # Apply max_items limit
-    if request.max_items and request.max_items < len(samples):
-        samples = samples[: request.max_items]
-
-    # Create dataset
-    dataset = Dataset(
-        name=source,
-        dataset_type=source,
-        description=description,
-        total_items=len(samples),
-        metadata_=json.dumps({"split": request.split, "subset": request.subset}),
-    )
-    db.add(dataset)
-    await db.flush()
-
-    # Create items
-    for idx, sample in enumerate(samples):
-        item_metadata = sample.get("metadata", {})
-        item = DatasetItem(
-            dataset_id=dataset.id,
-            item_index=idx,
-            prompt=sample["prompt"],
-            reference_answer=sample.get("reference_answer"),
-            metadata_=json.dumps(item_metadata),
-        )
-        db.add(item)
-
-    await db.flush()
-    await db.refresh(dataset)
-    return _dataset_to_response(dataset)
-
-
-@router.post("/upload", response_model=DatasetResponse)
-async def upload_dataset(
+async def _create_dataset_with_items(
+    db: AsyncSession,
+    *,
     name: str,
-    dataset_type: str = "custom",
-    description: Optional[str] = None,
-    items: list[DatasetUploadItem] = [],
-    db: AsyncSession = Depends(get_db),
-):
-    if not items:
-        raise HTTPException(status_code=400, detail="No items provided")
-
-    # Check if dataset already exists
+    dataset_type: str,
+    description: str | None,
+    samples: list[dict],
+    dataset_metadata: dict,
+) -> Dataset:
     existing = await db.execute(select(Dataset).where(Dataset.name == name))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Dataset '{name}' already exists")
@@ -635,24 +652,101 @@ async def upload_dataset(
         name=name,
         dataset_type=dataset_type,
         description=description,
-        total_items=len(items),
-        metadata_=json.dumps({}),
+        total_items=len(samples),
+        metadata_=json.dumps(dataset_metadata),
     )
     db.add(dataset)
     await db.flush()
 
-    for idx, upload_item in enumerate(items):
-        item = DatasetItem(
+    db.add_all(
+        DatasetItem(
             dataset_id=dataset.id,
             item_index=idx,
-            prompt=upload_item.prompt,
-            reference_answer=upload_item.reference_answer,
-            metadata_=json.dumps(upload_item.metadata),
+            prompt=sample["prompt"],
+            reference_answer=sample.get("reference_answer"),
+            metadata_=json.dumps(sample.get("metadata", {})),
         )
-        db.add(item)
-
+        for idx, sample in enumerate(samples)
+    )
     await db.flush()
     await db.refresh(dataset)
+    return dataset
+
+
+@router.post("/import", response_model=DatasetResponse)
+async def import_dataset(request: DatasetImportRequest, db: AsyncSession = Depends(get_db)):
+    source = request.source.lower()
+    origin = request.origin.lower()
+
+    if origin == "huggingface":
+        try:
+            samples = await fetch_hf_samples(source, request.max_items)
+        except HFImportError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        name = f"{source}-hf"
+        description = (
+            f"{HF_SOURCES[source]['dataset']} ({HF_SOURCES[source]['split']} split) "
+            f"imported from HuggingFace"
+        )
+    elif origin == "sample":
+        if source not in SAMPLE_GENERATORS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown dataset source: {request.source}. Available: {list(SAMPLE_GENERATORS.keys())}",
+            )
+        generator_fn, description = SAMPLE_GENERATORS[source]
+        samples = generator_fn()
+        if request.max_items and request.max_items < len(samples):
+            samples = samples[: request.max_items]
+        instruction = FORMAT_INSTRUCTIONS.get(source, "")
+        if instruction:
+            samples = [{**s, "prompt": s["prompt"] + instruction} for s in samples]
+        name = source
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown origin '{request.origin}'. Use 'sample' or 'huggingface'.",
+        )
+
+    dataset = await _create_dataset_with_items(
+        db,
+        name=name,
+        dataset_type=source,
+        description=description,
+        samples=samples,
+        dataset_metadata={
+            "origin": origin,
+            "split": request.split,
+            "subset": request.subset,
+        },
+    )
+    return _dataset_to_response(dataset)
+
+
+@router.post("/upload", response_model=DatasetResponse)
+async def upload_dataset(request: DatasetUploadRequest, db: AsyncSession = Depends(get_db)):
+    if not request.items:
+        raise HTTPException(status_code=400, detail="No items provided")
+
+    dataset_metadata: dict = {"origin": "upload"}
+    if request.system_prompt:
+        dataset_metadata["system_prompt"] = request.system_prompt
+
+    dataset = await _create_dataset_with_items(
+        db,
+        name=request.name,
+        dataset_type=request.dataset_type,
+        description=request.description,
+        samples=[
+            {
+                "prompt": item.prompt,
+                "reference_answer": item.reference_answer,
+                "metadata": item.metadata,
+            }
+            for item in request.items
+        ],
+        dataset_metadata=dataset_metadata,
+    )
     return _dataset_to_response(dataset)
 
 

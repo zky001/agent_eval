@@ -114,14 +114,63 @@ class TestDatasets:
     async def test_upload_custom(self, client):
         resp = await client.post(
             "/api/datasets/upload",
-            params={"name": "my-set", "dataset_type": "custom"},
-            json=[
-                {"prompt": "Say hi", "reference_answer": "hi"},
-                {"prompt": "Say bye", "reference_answer": "bye"},
-            ],
+            json={
+                "name": "my-set",
+                "dataset_type": "custom",
+                "items": [
+                    {"prompt": "Say hi", "reference_answer": "hi"},
+                    {"prompt": "Say bye", "reference_answer": "bye"},
+                ],
+            },
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["total_items"] == 2
+
+    async def test_upload_empty_items_rejected(self, client):
+        resp = await client.post(
+            "/api/datasets/upload", json={"name": "empty", "items": []}
+        )
+        assert resp.status_code == 400
+
+    async def test_sample_import_appends_format_instructions(self, client):
+        ds = await import_dataset(client, "gsm8k", max_items=1)
+        items = (await client.get(f"/api/datasets/{ds['id']}/items")).json()
+        assert "#### <number>" in items[0]["prompt"]
+
+    async def test_hf_import_uses_fetched_rows(self, client, monkeypatch):
+        from app.api import datasets as datasets_api
+
+        async def fake_fetch(source, max_items):
+            assert source == "gsm8k"
+            return [
+                {"prompt": "Real HF question #### format", "reference_answer": "#### 7"}
+            ]
+
+        monkeypatch.setattr(datasets_api, "fetch_hf_samples", fake_fetch)
+        resp = await client.post(
+            "/api/datasets/import",
+            json={"source": "gsm8k", "origin": "huggingface", "max_items": 1},
+        )
+        assert resp.status_code == 200, resp.text
+        ds = resp.json()
+        assert ds["name"] == "gsm8k-hf"
+        assert ds["dataset_type"] == "gsm8k"
+        assert ds["total_items"] == 1
+
+    async def test_hf_import_unreachable_returns_502(self, client, monkeypatch):
+        from app.api import datasets as datasets_api
+        from app.services.hf_datasets import HFImportError
+
+        async def fake_fetch(source, max_items):
+            raise HFImportError("network down")
+
+        monkeypatch.setattr(datasets_api, "fetch_hf_samples", fake_fetch)
+        resp = await client.post(
+            "/api/datasets/import",
+            json={"source": "gsm8k", "origin": "huggingface"},
+        )
+        assert resp.status_code == 502
+        assert "network down" in resp.json()["detail"]
 
 
 class TestRunLifecycle:
@@ -342,16 +391,22 @@ class TestLeaderboardWeighting:
         # Run 1: 1-item custom dataset, all correct (score 1.0)
         await client.post(
             "/api/datasets/upload",
-            params={"name": "small", "dataset_type": "custom"},
-            json=[{"prompt": "P1", "reference_answer": "yes"}],
+            json={
+                "name": "small",
+                "dataset_type": "custom",
+                "items": [{"prompt": "P1", "reference_answer": "yes"}],
+            },
         )
         # Run 2: 4-item custom dataset, all wrong (score 0.0)
         await client.post(
             "/api/datasets/upload",
-            params={"name": "big", "dataset_type": "custom"},
-            json=[
-                {"prompt": f"Q{i}", "reference_answer": "yes"} for i in range(4)
-            ],
+            json={
+                "name": "big",
+                "dataset_type": "custom",
+                "items": [
+                    {"prompt": f"Q{i}", "reference_answer": "yes"} for i in range(4)
+                ],
+            },
         )
         datasets = {d["name"]: d for d in (await client.get("/api/datasets/")).json()}
 

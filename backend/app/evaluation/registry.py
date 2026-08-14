@@ -23,6 +23,9 @@ class EvaluatorRegistry:
         "instruction_following": InstructionFollowingEvaluator,
         "api_interaction": APIInteractionEvaluator,
         "error_recovery": ErrorRecoveryEvaluator,
+        # Scored by the run's judge model in the dispatcher; this entry is a
+        # fallback so parse_answer still works if no judge is configured.
+        "llm_judge": CustomEvaluator,
     }
 
     @classmethod

@@ -16,6 +16,10 @@ class Result(Base):
     score = Column(Float, nullable=True)
     latency_ms = Column(Integer, nullable=True)
     token_count = Column(Integer, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    # Full multi-turn agent trajectory (JSON list), for agent_loop runs
+    trajectory = Column(Text, nullable=True)
     evaluation_details = Column(Text, default="{}")
     created_at = Column(DateTime, default=utcnow)
 

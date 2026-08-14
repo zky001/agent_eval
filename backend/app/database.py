@@ -68,6 +68,11 @@ _INDEX_DDL = [
 # tables, so databases created by older versions get them here.
 _COLUMN_MIGRATIONS = [
     ("evaluation_runs", "judge_model_config_id", "INTEGER REFERENCES model_configs(id)"),
+    ("results", "input_tokens", "INTEGER"),
+    ("results", "output_tokens", "INTEGER"),
+    ("results", "trajectory", "TEXT"),
+    ("model_configs", "input_price_per_million", "REAL"),
+    ("model_configs", "output_price_per_million", "REAL"),
 ]
 
 

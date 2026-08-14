@@ -14,7 +14,7 @@ from app.models.evaluation_run import EvaluationRun
 from app.models.model_config import ModelConfig
 from app.models.result import Result
 from app.models.task import Task
-from app.schemas.run import BatchRunCreate, RunCreate, RunResponse
+from app.schemas.run import BatchRunCreate, RunCreate, RunResponse, TaskReviewRequest
 from app.services.dispatcher import spawn_run
 from app.utils import utcnow
 
@@ -288,12 +288,28 @@ async def get_run(run_id: int, db: AsyncSession = Depends(get_db)):
                 func.count(Result.id).filter(Result.is_correct.is_(True)),
                 func.avg(Result.latency_ms),
                 func.sum(Result.token_count),
+                func.sum(Result.input_tokens),
+                func.sum(Result.output_tokens),
             )
             .join(Task, Task.id == Result.task_id)
             .where(Task.run_id == run_id)
         )
     ).one()
-    correct_tasks, avg_latency, total_tokens = stats_row
+    correct_tasks, avg_latency, total_tokens, sum_in, sum_out = stats_row
+
+    cost_usd = None
+    model_config = await db.get(ModelConfig, run.model_config_id)
+    if (
+        model_config
+        and model_config.input_price_per_million is not None
+        and model_config.output_price_per_million is not None
+        and (sum_in or sum_out)
+    ):
+        cost_usd = round(
+            (sum_in or 0) * model_config.input_price_per_million / 1_000_000
+            + (sum_out or 0) * model_config.output_price_per_million / 1_000_000,
+            6,
+        )
 
     return _run_to_response(
         run,
@@ -302,6 +318,7 @@ async def get_run(run_id: int, db: AsyncSession = Depends(get_db)):
         correct_tasks=correct_tasks or 0,
         avg_latency_ms=round(avg_latency, 1) if avg_latency is not None else None,
         total_tokens=total_tokens,
+        cost_usd=cost_usd,
     )
 
 
@@ -357,11 +374,85 @@ async def get_run_tasks(
             "evaluation_details": _parse_json_field(result.evaluation_details)
             if result
             else {},
+            "trajectory": _parse_json_list(result.trajectory) if result else None,
         }
         for task, result, item in rows
     ]
 
     return {"tasks": task_responses, "total": total}
+
+
+def _parse_json_list(value) -> list | None:
+    if not value:
+        return None
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+@router.post("/{run_id}/tasks/{task_id}/review")
+async def review_task(
+    run_id: int,
+    task_id: int,
+    review: TaskReviewRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Human override of a single task's verdict; recomputes the run score.
+
+    The original machine verdict is preserved inside evaluation_details so
+    an override is auditable and never destroys information.
+    """
+    task = await db.get(Task, task_id)
+    if not task or task.run_id != run_id:
+        raise HTTPException(status_code=404, detail="Task not found in this run")
+
+    result = (
+        await db.execute(select(Result).where(Result.task_id == task_id))
+    ).scalar_one_or_none()
+    if not result:
+        raise HTTPException(status_code=400, detail="Task has no result to review")
+
+    details = _parse_json_field(result.evaluation_details)
+    if "human_review" not in details:
+        details["human_review"] = {
+            "original_score": result.score,
+            "original_is_correct": result.is_correct,
+        }
+    details["human_review"]["is_correct"] = review.is_correct
+    if review.note:
+        details["human_review"]["note"] = review.note
+
+    result.is_correct = review.is_correct
+    new_score = review.score
+    if new_score is None:
+        new_score = 1.0 if review.is_correct else 0.0
+    result.score = max(0.0, min(1.0, float(new_score)))
+    details["human_review"]["score"] = result.score
+    result.evaluation_details = json.dumps(details)
+    await db.flush()
+
+    # Recompute the run aggregate over all scored results
+    agg = (
+        await db.execute(
+            select(func.avg(Result.score))
+            .join(Task, Task.id == Result.task_id)
+            .where(Task.run_id == run_id)
+            .where(Result.score.isnot(None))
+        )
+    ).scalar()
+    run = await db.get(EvaluationRun, run_id)
+    if run:
+        run.aggregate_score = agg
+
+    return {
+        "detail": "Review saved",
+        "task_id": task_id,
+        "is_correct": result.is_correct,
+        "score": result.score,
+        "aggregate_score": agg,
+    }
 
 
 @router.post("/{run_id}/cancel")

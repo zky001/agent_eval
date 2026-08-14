@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text
 
 from app.database import Base
 from app.utils import utcnow
@@ -14,5 +14,8 @@ class ModelConfig(Base):
     api_key = Column(String, nullable=True)
     model_id = Column(String, nullable=False)
     default_params = Column(Text, default="{}")
+    # USD per 1M tokens; None = cost tracking disabled for this model
+    input_price_per_million = Column(Float, nullable=True)
+    output_price_per_million = Column(Float, nullable=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

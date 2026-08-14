@@ -12,6 +12,8 @@ export async function createModel(data: {
   model_id: string;
   api_key?: string;
   api_base_url?: string;
+  input_price_per_million?: number;
+  output_price_per_million?: number;
   default_params?: Record<string, unknown>;
 }): Promise<ModelConfig> {
   const response = await client.post<ModelConfig>("/models", data);
@@ -31,6 +33,8 @@ export async function updateModel(
     model_id: string;
     api_key: string;
     api_base_url: string;
+    input_price_per_million: number;
+    output_price_per_million: number;
     default_params: Record<string, unknown>;
   }>
 ): Promise<ModelConfig> {

@@ -76,3 +76,16 @@ export async function compareRuns(runIds: number[]): Promise<CompareData> {
   });
   return response.data;
 }
+
+export async function reviewTask(
+  runId: number,
+  taskId: number,
+  isCorrect: boolean,
+  note?: string
+): Promise<{ aggregate_score: number }> {
+  const response = await client.post<{ aggregate_score: number }>(
+    `/runs/${runId}/tasks/${taskId}/review`,
+    { is_correct: isCorrect, note }
+  );
+  return response.data;
+}

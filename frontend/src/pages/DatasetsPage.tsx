@@ -24,6 +24,7 @@ import { Dataset, DATASET_TYPE_LABELS } from "../types";
 const HF_SOURCES = new Set(["gsm8k", "mmlu", "humaneval"]);
 
 const SOURCE_OPTIONS = [
+  "agent_loop",
   "tool_use",
   "multi_step",
   "react",

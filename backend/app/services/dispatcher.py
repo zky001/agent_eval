@@ -13,6 +13,7 @@ from app.models.evaluation_run import EvaluationRun
 from app.models.model_config import ModelConfig
 from app.models.result import Result
 from app.models.task import Task
+from app.services.agent_loop import run_agent_loop
 from app.services.llm_clients import create_llm_client
 from app.utils import utcnow
 
@@ -206,7 +207,7 @@ class RunExecutor:
             async def process_task(task_id: int, dataset_item_id: int) -> None:
                 async with semaphore:
                     await self._process_single_task(
-                        task_id, dataset_item_id, llm_client, merged_params
+                        task_id, dataset_item_id, llm_client, merged_params, dataset_type
                     )
 
             results = await asyncio.gather(
@@ -271,6 +272,7 @@ class RunExecutor:
         dataset_item_id: int,
         llm_client,
         params: dict,
+        dataset_type: str,
     ) -> None:
         # Short session: mark the task running. The session is closed before
         # the LLM call so slow requests don't pin DB connections.
@@ -293,9 +295,25 @@ class RunExecutor:
             params = {**params, "system": item_meta["system_prompt"]}
 
         error: Exception | None = None
-        llm_response = None
+        raw_response: str | None = None
+        trajectory_json: str | None = None
+        latency_ms = 0
+        input_tokens = 0
+        output_tokens = 0
         try:
-            llm_response = await llm_client.complete(prompt, params)
+            if dataset_type == "agent_loop":
+                outcome = await run_agent_loop(llm_client, prompt, item_meta, params)
+                raw_response = outcome.final_answer or outcome.last_output
+                trajectory_json = json.dumps(outcome.trajectory)
+                latency_ms = outcome.latency_ms
+                input_tokens = outcome.input_tokens
+                output_tokens = outcome.output_tokens
+            else:
+                llm_response = await llm_client.complete(prompt, params)
+                raw_response = llm_response.text
+                latency_ms = llm_response.latency_ms
+                input_tokens = llm_response.input_tokens
+                output_tokens = llm_response.output_tokens
         except Exception as e:
             error = e
             logger.error(f"Task {task_id} failed: {e}")
@@ -312,10 +330,12 @@ class RunExecutor:
                 db.add(
                     Result(
                         task_id=task_id,
-                        raw_response=llm_response.text,
-                        latency_ms=llm_response.latency_ms,
-                        token_count=llm_response.input_tokens
-                        + llm_response.output_tokens,
+                        raw_response=raw_response,
+                        trajectory=trajectory_json,
+                        latency_ms=latency_ms,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        token_count=input_tokens + output_tokens,
                     )
                 )
                 counter = {"completed_tasks": EvaluationRun.completed_tasks + 1}
@@ -403,6 +423,13 @@ class RunExecutor:
                 evaluator = EvaluatorRegistry.get(dataset_type)
                 for task, result, dataset_item in rows:
                     item_metadata = _parse_json_dict(dataset_item.metadata_)
+                    if dataset_type == "agent_loop":
+                        try:
+                            item_metadata["_trajectory"] = json.loads(
+                                result.trajectory or "[]"
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            item_metadata["_trajectory"] = []
 
                     # Evaluators are synchronous and may run subprocesses
                     # (humaneval); keep them off the event loop.

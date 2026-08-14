@@ -9,11 +9,12 @@ import {
   Tag,
 } from "antd";
 import { TrophyOutlined } from "@ant-design/icons";
-import { getLeaderboard } from "../api/leaderboard";
+import { getLeaderboard, getScoreHistory } from "../api/leaderboard";
 import { listDatasets } from "../api/datasets";
 import { listModels } from "../api/models";
 import ScoreChart from "../components/ScoreChart";
-import { Dataset, LeaderboardEntry, ModelConfig } from "../types";
+import TrendChart from "../components/TrendChart";
+import { Dataset, LeaderboardEntry, ModelConfig, ScoreHistoryPoint } from "../types";
 
 const medalColors: Record<number, string> = {
   1: "#ffd700",
@@ -29,6 +30,7 @@ const LeaderboardPage: React.FC = () => {
   const [selectedDataset, setSelectedDataset] = useState<number | undefined>(
     undefined
   );
+  const [history, setHistory] = useState<ScoreHistoryPoint[]>([]);
 
   useEffect(() => {
     listDatasets().then(setDatasets).catch(() => undefined);
@@ -54,6 +56,11 @@ const LeaderboardPage: React.FC = () => {
   const handleDatasetChange = (value: number | undefined) => {
     setSelectedDataset(value);
     fetchLeaderboard(value);
+    if (value !== undefined) {
+      getScoreHistory(value).then(setHistory).catch(() => setHistory([]));
+    } else {
+      setHistory([]);
+    }
   };
 
   const maxScore =
@@ -141,6 +148,14 @@ const LeaderboardPage: React.FC = () => {
       render: (val: number) =>
         val !== undefined && val !== null ? `${(val / 1000).toFixed(2)}s` : "--",
     },
+    {
+      title: "单次成本",
+      dataIndex: "avg_cost_usd",
+      key: "avg_cost_usd",
+      width: 110,
+      render: (val: number | null | undefined) =>
+        val !== undefined && val !== null ? `$${val.toFixed(4)}` : "--",
+    },
   ];
 
   return (
@@ -176,6 +191,15 @@ const LeaderboardPage: React.FC = () => {
         <Card style={{ marginBottom: 16 }}>
           <ScoreChart
             entries={entries}
+            colorDomain={models.map((m) => m.name)}
+          />
+        </Card>
+      )}
+
+      {selectedDataset !== undefined && history.length > 1 && (
+        <Card title="得分趋势（该数据集的历史运行）" style={{ marginBottom: 16 }}>
+          <TrendChart
+            points={history}
             colorDomain={models.map((m) => m.name)}
           />
         </Card>

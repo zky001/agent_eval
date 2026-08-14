@@ -24,6 +24,8 @@ export interface ModelConfig {
   api_key?: string;
   api_base_url?: string;
   default_params?: Record<string, unknown>;
+  input_price_per_million?: number;
+  output_price_per_million?: number;
   created_at: string;
   updated_at?: string;
 }
@@ -44,11 +46,21 @@ export interface EvaluationRun {
   correct_tasks?: number;
   avg_latency_ms?: number;
   total_tokens?: number;
+  cost_usd?: number;
   params_override?: Record<string, unknown>;
   started_at?: string;
   completed_at?: string;
   created_at: string;
   error_message?: string;
+}
+
+export interface TrajectoryStep {
+  turn: number;
+  model_output: string;
+  action?: { tool: string; args: Record<string, unknown> };
+  observation?: string;
+  final_answer?: string;
+  note?: string;
 }
 
 export interface TaskResult {
@@ -63,6 +75,7 @@ export interface TaskResult {
   latency_ms?: number;
   token_count?: number;
   evaluation_details?: Record<string, unknown>;
+  trajectory?: TrajectoryStep[] | null;
   status: string;
 }
 
@@ -73,6 +86,15 @@ export interface LeaderboardEntry {
   score: number;
   completed_runs: number;
   avg_latency: number;
+  avg_cost_usd?: number | null;
+}
+
+export interface ScoreHistoryPoint {
+  run_id: number;
+  model_id: number;
+  model_name: string;
+  score: number;
+  completed_at?: string | null;
 }
 
 export interface CompareItemResult {
@@ -105,6 +127,7 @@ export const DATASET_TYPE_LABELS: Record<string, string> = {
   multi_step: "多步规划",
   react: "ReAct 推理",
   instruction_following: "指令遵循",
+  agent_loop: "多轮工具代理",
   api_interaction: "API 交互",
   error_recovery: "错误恢复",
   llm_judge: "LLM 裁判评分",

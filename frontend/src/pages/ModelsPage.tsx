@@ -6,6 +6,7 @@ import {
   Drawer,
   Form,
   Input,
+  InputNumber,
   Select,
   message,
   Popconfirm,
@@ -65,6 +66,8 @@ const ModelsPage: React.FC = () => {
         // 否则保存时会用掩码覆盖真实 Key
         api_key: "",
         api_base_url: model.api_base_url || "",
+        input_price_per_million: model.input_price_per_million ?? undefined,
+        output_price_per_million: model.output_price_per_million ?? undefined,
         default_params: model.default_params
           ? JSON.stringify(model.default_params, null, 2)
           : "",
@@ -90,6 +93,8 @@ const ModelsPage: React.FC = () => {
     model_id: string;
     api_key?: string;
     api_base_url?: string;
+    input_price_per_million?: number;
+    output_price_per_million?: number;
     default_params?: string;
   }) => {
     setSubmitting(true);
@@ -111,6 +116,8 @@ const ModelsPage: React.FC = () => {
         model_id: values.model_id,
         api_key: values.api_key || undefined,
         api_base_url: values.api_base_url || undefined,
+        input_price_per_million: values.input_price_per_million ?? undefined,
+        output_price_per_million: values.output_price_per_million ?? undefined,
         default_params: defaultParams,
       };
 
@@ -346,6 +353,29 @@ const ModelsPage: React.FC = () => {
             help="留空使用官方地址；OpenAI 兼容接口、代理或本地服务在此填写"
           >
             <Input placeholder="例如：http://localhost:11434/v1" />
+          </Form.Item>
+
+          <Form.Item label="价格（美元 / 百万 tokens，可选）" style={{ marginBottom: 0 }}>
+            <Space.Compact block>
+              <Form.Item name="input_price_per_million" style={{ width: "50%" }}>
+                <InputNumber
+                  min={0}
+                  step={0.01}
+                  style={{ width: "100%" }}
+                  placeholder="输入价格，如 2.5"
+                  addonBefore="入"
+                />
+              </Form.Item>
+              <Form.Item name="output_price_per_million" style={{ width: "50%" }}>
+                <InputNumber
+                  min={0}
+                  step={0.01}
+                  style={{ width: "100%" }}
+                  placeholder="输出价格，如 10"
+                  addonBefore="出"
+                />
+              </Form.Item>
+            </Space.Compact>
           </Form.Item>
 
           <Form.Item

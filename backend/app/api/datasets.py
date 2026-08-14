@@ -564,7 +564,171 @@ def _generate_llm_judge_samples() -> list[dict]:
     ]
 
 
+def _generate_agent_loop_samples() -> list[dict]:
+    """Multi-turn agent tasks executed against simulated tools."""
+    return [
+        {
+            "prompt": "Find out the current weather in Tokyo. If it is raining, send a message to Alice saying 'bring an umbrella'; otherwise send her 'clear skies today'. Then report what you did.",
+            "reference_answer": json.dumps({
+                "final_answer_keywords": ["clear skies", "Alice"],
+                "expected_tool_sequence": ["get_weather", "send_message"],
+                "expected_tool_args": {
+                    "get_weather": {"city": "Tokyo"},
+                    "send_message": {"user": "Alice", "text": "clear skies"},
+                },
+            }),
+            "metadata": {
+                "max_turns": 5,
+                "tools": [
+                    {
+                        "name": "get_weather",
+                        "description": "Get current weather for a city",
+                        "parameters": {"city": "city name"},
+                        "responses": [
+                            {"when_args_contain": {"city": "tokyo"}, "response": "Sunny, 28C, 0% chance of rain"},
+                        ],
+                        "response": "Weather data unavailable for that city",
+                    },
+                    {
+                        "name": "send_message",
+                        "description": "Send a text message to a user",
+                        "parameters": {"user": "recipient name", "text": "message body"},
+                        "response": "Message delivered",
+                    },
+                ],
+            },
+        },
+        {
+            "prompt": "How much would 3 units of product SKU-1002 cost in total? Look up the price first, then compute the total, and give the final amount in dollars.",
+            "reference_answer": json.dumps({
+                "final_answer_keywords": ["74.85"],
+                "expected_tool_sequence": ["lookup_price", "calculator"],
+                "expected_tool_args": {"lookup_price": {"sku": "SKU-1002"}},
+            }),
+            "metadata": {
+                "max_turns": 5,
+                "tools": [
+                    {
+                        "name": "lookup_price",
+                        "description": "Look up the unit price of a product by SKU",
+                        "parameters": {"sku": "product SKU"},
+                        "responses": [
+                            {"when_args_contain": {"sku": "1002"}, "response": "SKU-1002 unit price: $24.95"},
+                        ],
+                        "response": "Unknown SKU",
+                    },
+                    {
+                        "name": "calculator",
+                        "description": "Evaluate a math expression",
+                        "parameters": {"expression": "math expression"},
+                        "responses": [
+                            {"when_args_contain": {"expression": "24.95"}, "response": "74.85"},
+                        ],
+                        "response": "Error: cannot evaluate",
+                    },
+                ],
+            },
+        },
+        {
+            "prompt": "Customer order #8841 arrived damaged. Look up the order, refund it in full, and confirm to the customer by email what was refunded.",
+            "reference_answer": json.dumps({
+                "final_answer_keywords": ["refund", "89.99"],
+                "expected_tool_sequence": ["get_order", "issue_refund", "send_email"],
+                "expected_tool_args": {
+                    "get_order": {"order_id": "8841"},
+                    "issue_refund": {"order_id": "8841"},
+                },
+            }),
+            "metadata": {
+                "max_turns": 6,
+                "tools": [
+                    {
+                        "name": "get_order",
+                        "description": "Fetch order details by ID",
+                        "parameters": {"order_id": "order number"},
+                        "responses": [
+                            {"when_args_contain": {"order_id": "8841"}, "response": "Order 8841: 1x Ceramic Vase, total $89.99, customer bob@example.com, status: delivered"},
+                        ],
+                        "response": "Order not found",
+                    },
+                    {
+                        "name": "issue_refund",
+                        "description": "Refund an order in full",
+                        "parameters": {"order_id": "order number"},
+                        "responses": [
+                            {"when_args_contain": {"order_id": "8841"}, "response": "Refund of $89.99 issued for order 8841"},
+                        ],
+                        "response": "Refund failed: unknown order",
+                    },
+                    {
+                        "name": "send_email",
+                        "description": "Send an email",
+                        "parameters": {"to": "email address", "subject": "subject", "body": "email body"},
+                        "response": "Email sent",
+                    },
+                ],
+            },
+        },
+        {
+            "prompt": "Which of our three warehouses (WH-A, WH-B, WH-C) currently has stock of item 'widget-9'? Check them and answer with the warehouse that has it.",
+            "reference_answer": json.dumps({
+                "final_answer_keywords": ["WH-C"],
+                "expected_tool_sequence": ["check_stock"],
+                "max_expected_turns": 4,
+            }),
+            "metadata": {
+                "max_turns": 6,
+                "tools": [
+                    {
+                        "name": "check_stock",
+                        "description": "Check stock of an item in a warehouse",
+                        "parameters": {"warehouse": "warehouse code", "item": "item name"},
+                        "responses": [
+                            {"when_args_contain": {"warehouse": "wh-c", "item": "widget-9"}, "response": "WH-C: 42 units of widget-9 in stock"},
+                            {"when_args_contain": {"item": "widget-9"}, "response": "0 units in stock"},
+                        ],
+                        "response": "Unknown item",
+                    },
+                ],
+            },
+        },
+        {
+            "prompt": "A user reports they cannot log in. Check the status of the auth service, and if it is degraded, restart it and verify it recovered. Report the final state.",
+            "reference_answer": json.dumps({
+                "final_answer_keywords": ["healthy"],
+                "expected_tool_sequence": ["service_status", "restart_service", "service_status"],
+                "expected_tool_args": {"restart_service": {"service": "auth"}},
+            }),
+            "metadata": {
+                "max_turns": 6,
+                "tools": [
+                    {
+                        "name": "service_status",
+                        "description": "Get the health status of a service",
+                        "parameters": {"service": "service name"},
+                        "responses": [
+                            {"when_args_contain": {"service": "auth"}, "when_called_after": "restart_service", "response": "auth service: healthy (error rate 0.1%)"},
+                            {"when_args_contain": {"service": "auth"}, "response": "auth service: DEGRADED (error rate 34%)"},
+                        ],
+                        "response": "Unknown service",
+                    },
+                    {
+                        "name": "restart_service",
+                        "description": "Restart a service",
+                        "parameters": {"service": "service name"},
+                        "responses": [
+                            {"when_args_contain": {"service": "auth"}, "response": "auth service restarted successfully"},
+                        ],
+                        "response": "Restart failed: unknown service",
+                    },
+                ],
+            },
+        },
+    ]
+
+
 SAMPLE_GENERATORS = {
+    "agent_loop": (_generate_agent_loop_samples, "Agent Loop - multi-turn tool-use tasks against simulated tools"),
     "gsm8k": (_generate_gsm8k_samples, "Grade School Math 8K - sample problems"),
     "mmlu": (_generate_mmlu_samples, "Massive Multitask Language Understanding - sample questions"),
     "humaneval": (_generate_humaneval_samples, "HumanEval - sample coding problems"),

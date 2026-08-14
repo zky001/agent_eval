@@ -131,8 +131,11 @@ class BaseLLMClient(ABC):
         return merged, timeout, system
 
     @abstractmethod
+    async def chat(self, messages: list[dict], params: dict | None = None) -> LLMResponse:
+        """Multi-turn completion. messages: [{"role": "user"|"assistant", "content": str}]."""
+
     async def complete(self, prompt: str, params: dict | None = None) -> LLMResponse:
-        pass
+        return await self.chat([{"role": "user", "content": prompt}], params)
 
 
 class OpenAIClient(BaseLLMClient):
@@ -148,19 +151,19 @@ class OpenAIClient(BaseLLMClient):
         self.model_id = model_id
         self.api_base_url = (api_base_url or "https://api.openai.com/v1").rstrip("/")
 
-    async def complete(self, prompt: str, params: dict | None = None) -> LLMResponse:
+    async def chat(self, messages: list[dict], params: dict | None = None) -> LLMResponse:
         api_params, timeout, system = self._prepare_params(params)
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        messages = []
+        all_messages = []
         if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+            all_messages.append({"role": "system", "content": system})
+        all_messages.extend(messages)
         body = {
             "model": self.model_id,
-            "messages": messages,
+            "messages": all_messages,
             **api_params,
         }
 
@@ -194,7 +197,7 @@ class AnthropicClient(BaseLLMClient):
         self.model_id = model_id
         self.api_base_url = (api_base_url or "https://api.anthropic.com/v1").rstrip("/")
 
-    async def complete(self, prompt: str, params: dict | None = None) -> LLMResponse:
+    async def chat(self, messages: list[dict], params: dict | None = None) -> LLMResponse:
         api_params, timeout, system = self._prepare_params(params)
         max_tokens = api_params.pop("max_tokens", 4096)
         headers = {
@@ -205,7 +208,7 @@ class AnthropicClient(BaseLLMClient):
         body = {
             "model": self.model_id,
             "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": messages,
             **api_params,
         }
         if system:

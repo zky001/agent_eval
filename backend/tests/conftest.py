@@ -43,10 +43,13 @@ async def client():
 class FakeLLMClient:
     """Deterministic in-process replacement for provider clients."""
 
-    def __init__(self, responder=None, delay: float = 0.0):
+    def __init__(self, responder=None, chat_responder=None, delay: float = 0.0):
         self.responder = responder or (lambda prompt: "42")
+        # chat_responder(messages) -> text; used by multi-turn agent loops
+        self.chat_responder = chat_responder
         self.delay = delay
         self.calls: list[tuple[str, dict]] = []
+        self.chat_calls: list[tuple[list, dict]] = []
         self.closed = False
 
     async def complete(self, prompt: str, params: dict | None = None) -> LLMResponse:
@@ -54,6 +57,20 @@ class FakeLLMClient:
         if self.delay:
             await asyncio.sleep(self.delay)
         text = self.responder(prompt)
+        if isinstance(text, Exception):
+            raise text
+        return LLMResponse(text=text, latency_ms=7, input_tokens=10, output_tokens=5)
+
+    async def chat(self, messages: list, params: dict | None = None) -> LLMResponse:
+        if self.chat_responder is None:
+            prompt = next(
+                m["content"] for m in reversed(messages) if m["role"] == "user"
+            )
+            return await self.complete(prompt, params)
+        self.chat_calls.append(([dict(m) for m in messages], dict(params or {})))
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        text = self.chat_responder(messages)
         if isinstance(text, Exception):
             raise text
         return LLMResponse(text=text, latency_ms=7, input_tokens=10, output_tokens=5)

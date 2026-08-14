@@ -10,6 +10,8 @@ class ModelConfigCreate(BaseModel):
     api_key: str | None = None
     model_id: str
     default_params: dict = {}
+    input_price_per_million: float | None = None
+    output_price_per_million: float | None = None
 
 
 class ModelConfigUpdate(BaseModel):
@@ -19,6 +21,8 @@ class ModelConfigUpdate(BaseModel):
     api_key: str | None = None
     model_id: str | None = None
     default_params: dict | None = None
+    input_price_per_million: float | None = None
+    output_price_per_million: float | None = None
 
 
 class ModelConfigResponse(BaseModel):
@@ -29,6 +33,8 @@ class ModelConfigResponse(BaseModel):
     api_key: str | None
     model_id: str
     default_params: dict = {}
+    input_price_per_million: float | None = None
+    output_price_per_million: float | None = None
     created_at: datetime
     updated_at: datetime
 

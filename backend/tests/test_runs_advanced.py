@@ -261,3 +261,165 @@ class TestLLMJudge:
         assert final["aggregate_score"] == 0.0
         tasks = (await client.get(f"/api/runs/{run['id']}/tasks")).json()
         assert "error" in tasks["tasks"][0]["evaluation_details"]
+
+
+class TestAgentLoopAPI:
+    async def test_agent_loop_run_end_to_end(self, client, monkeypatch):
+        script = [
+            'Action: get_weather({"city": "Tokyo"})',
+            'Action: send_message({"user": "Alice", "text": "clear skies today"})',
+            "Final Answer: Weather was sunny so I told Alice clear skies today.",
+        ]
+        fake = FakeLLMClient(
+            chat_responder=lambda messages: script[
+                sum(1 for m in messages if m["role"] == "assistant")
+            ]
+        )
+        monkeypatch.setattr(dispatcher, "create_llm_client", lambda cfg: fake)
+
+        model = await create_test_model(client)
+        ds = await import_dataset(client, "agent_loop", max_items=1)
+        run = (
+            await client.post(
+                "/api/runs/",
+                json={"dataset_id": ds["id"], "model_config_id": model["id"]},
+            )
+        ).json()
+        final = await wait_for_run_terminal(client, run["id"])
+        assert final["status"] == "completed", final
+        assert final["aggregate_score"] == 1.0
+
+        tasks = (await client.get(f"/api/runs/{run['id']}/tasks")).json()["tasks"]
+        first = tasks[0]
+        assert first["is_correct"] is True
+        # Trajectory is returned for UI display
+        assert len(first["trajectory"]) == 3
+        assert first["trajectory"][0]["action"]["tool"] == "get_weather"
+        assert "Sunny" in first["trajectory"][0]["observation"]
+        details = first["evaluation_details"]
+        assert details["actual_tool_sequence"] == ["get_weather", "send_message"]
+        assert details["finished_with_final_answer"] is True
+
+
+class TestCostTracking:
+    async def test_run_cost_and_leaderboard_cost(self, client, fake_llm):
+        fake_llm.responder = lambda prompt: "#### 18"
+        resp = await client.post(
+            "/api/models/",
+            json={
+                "name": "priced-model",
+                "provider": "openai",
+                "model_id": "gpt-test",
+                "api_key": "sk-secret-key-12345",
+                "input_price_per_million": 1.0,
+                "output_price_per_million": 2.0,
+            },
+        )
+        model = resp.json()
+        assert model["input_price_per_million"] == 1.0
+
+        ds = await import_dataset(client, "gsm8k", max_items=2)
+        run = (
+            await client.post(
+                "/api/runs/",
+                json={"dataset_id": ds["id"], "model_config_id": model["id"]},
+            )
+        ).json()
+        final = await wait_for_run_terminal(client, run["id"])
+        # 2 tasks x (10 in @ $1/M + 5 out @ $2/M) = 2 x $0.00002 = $0.00004
+        assert final["cost_usd"] == 0.00004
+
+        board = (await client.get("/api/leaderboard/")).json()
+        assert board[0]["avg_cost_usd"] == 0.00004
+
+    async def test_cost_none_without_pricing(self, client, fake_llm):
+        fake_llm.responder = lambda prompt: "#### 18"
+        model = await create_test_model(client)
+        ds = await import_dataset(client, "gsm8k", max_items=1)
+        run = (
+            await client.post(
+                "/api/runs/",
+                json={"dataset_id": ds["id"], "model_config_id": model["id"]},
+            )
+        ).json()
+        final = await wait_for_run_terminal(client, run["id"])
+        assert final["cost_usd"] is None
+
+
+class TestHumanReview:
+    async def test_override_recomputes_aggregate(self, client, fake_llm):
+        fake_llm.responder = lambda prompt: "#### 999"  # wrong
+        model = await create_test_model(client)
+        ds = await import_dataset(client, "gsm8k", max_items=1)
+        run = (
+            await client.post(
+                "/api/runs/",
+                json={"dataset_id": ds["id"], "model_config_id": model["id"]},
+            )
+        ).json()
+        final = await wait_for_run_terminal(client, run["id"])
+        assert final["aggregate_score"] == 0.0
+
+        tasks = (await client.get(f"/api/runs/{run['id']}/tasks")).json()["tasks"]
+        task_id = tasks[0]["task_id"]
+
+        resp = await client.post(
+            f"/api/runs/{run['id']}/tasks/{task_id}/review",
+            json={"is_correct": True, "note": "answer was actually acceptable"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["score"] == 1.0
+        assert body["aggregate_score"] == 1.0
+
+        refreshed = (await client.get(f"/api/runs/{run['id']}")).json()
+        assert refreshed["aggregate_score"] == 1.0
+        assert refreshed["correct_tasks"] == 1
+
+        # Original machine verdict preserved for audit
+        tasks = (await client.get(f"/api/runs/{run['id']}/tasks")).json()["tasks"]
+        review = tasks[0]["evaluation_details"]["human_review"]
+        assert review["original_is_correct"] is False
+        assert review["original_score"] == 0.0
+        assert review["note"] == "answer was actually acceptable"
+
+    async def test_review_missing_task_404(self, client, fake_llm):
+        fake_llm.responder = lambda prompt: "#### 18"
+        model = await create_test_model(client)
+        ds = await import_dataset(client, "gsm8k", max_items=1)
+        run = (
+            await client.post(
+                "/api/runs/",
+                json={"dataset_id": ds["id"], "model_config_id": model["id"]},
+            )
+        ).json()
+        await wait_for_run_terminal(client, run["id"])
+        resp = await client.post(
+            f"/api/runs/{run['id']}/tasks/99999/review", json={"is_correct": True}
+        )
+        assert resp.status_code == 404
+
+
+class TestScoreHistory:
+    async def test_history_points(self, client, fake_llm):
+        fake_llm.responder = lambda prompt: "#### 18"
+        model = await create_test_model(client)
+        ds = await import_dataset(client, "gsm8k", max_items=1)
+        for _ in range(2):
+            run = (
+                await client.post(
+                    "/api/runs/",
+                    json={"dataset_id": ds["id"], "model_config_id": model["id"]},
+                )
+            ).json()
+            await wait_for_run_terminal(client, run["id"])
+
+        resp = await client.get(
+            "/api/leaderboard/history", params={"dataset_id": ds["id"]}
+        )
+        assert resp.status_code == 200
+        points = resp.json()
+        assert len(points) == 2
+        assert points[0]["model_name"] == "test-model"
+        assert points[0]["score"] == 100.0
+        assert points[0]["completed_at"] is not None

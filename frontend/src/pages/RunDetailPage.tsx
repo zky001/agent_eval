@@ -24,8 +24,20 @@ import {
   DownloadOutlined,
   RedoOutlined,
 } from "@ant-design/icons";
-import { getRun, getRunTasks, cancelRun, retryRun, exportRunUrl } from "../api/runs";
-import { EvaluationRun, TaskResult, RUN_STATUS_LABELS } from "../types";
+import {
+  getRun,
+  getRunTasks,
+  cancelRun,
+  retryRun,
+  exportRunUrl,
+  reviewTask,
+} from "../api/runs";
+import {
+  EvaluationRun,
+  TaskResult,
+  TrajectoryStep,
+  RUN_STATUS_LABELS,
+} from "../types";
 
 const statusColors: Record<string, string> = {
   pending: "default",
@@ -164,6 +176,19 @@ const RunDetailPage: React.FC = () => {
   const handleFilterChange = (value: string) => {
     setFilter(value);
     setPage(1);
+  };
+
+  const handleReview = async (taskId: number, isCorrect: boolean) => {
+    if (!id) return;
+    try {
+      await reviewTask(Number(id), taskId, isCorrect);
+      message.success(isCorrect ? "已人工判为正确" : "已人工判为错误");
+      fetchTasks();
+      fetchRun();
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      message.error(error.response?.data?.detail || "复核提交失败");
+    }
   };
 
   const columns = [
@@ -407,6 +432,11 @@ const RunDetailPage: React.FC = () => {
               ? run.total_tokens.toLocaleString()
               : "--"}
           </Descriptions.Item>
+          <Descriptions.Item label="成本">
+            {run.cost_usd !== undefined && run.cost_usd !== null
+              ? `$${run.cost_usd.toFixed(4)}`
+              : "--"}
+          </Descriptions.Item>
           <Descriptions.Item label="开始时间">
             {run.started_at ? new Date(run.started_at).toLocaleString() : "--"}
           </Descriptions.Item>
@@ -451,10 +481,72 @@ const RunDetailPage: React.FC = () => {
           expandable={{
             expandedRowRender: (record: TaskResult) => (
               <div style={{ display: "grid", gap: 12 }}>
+                {record.status === "completed" && (
+                  <Space>
+                    <Typography.Text strong>人工复核：</Typography.Text>
+                    <Button size="small" onClick={() => handleReview(record.task_id, true)}>
+                      判为正确
+                    </Button>
+                    <Button size="small" danger onClick={() => handleReview(record.task_id, false)}>
+                      判为错误
+                    </Button>
+                    {record.evaluation_details &&
+                      (record.evaluation_details as { human_review?: unknown })
+                        .human_review !== undefined && (
+                        <Tag color="purple">已人工复核</Tag>
+                      )}
+                  </Space>
+                )}
                 <div>
                   <Typography.Text strong>题目</Typography.Text>
                   <pre style={expandedBlockStyle}>{record.prompt || "--"}</pre>
                 </div>
+                {record.trajectory && record.trajectory.length > 0 && (
+                  <div>
+                    <Typography.Text strong>执行轨迹（{record.trajectory.length} 轮）</Typography.Text>
+                    <div style={{ display: "grid", gap: 8, marginTop: 4 }}>
+                      {record.trajectory.map((step: TrajectoryStep) => (
+                        <div
+                          key={step.turn}
+                          style={{
+                            border: "1px solid #f0f0f0",
+                            borderLeft: "3px solid #2a78d6",
+                            borderRadius: 4,
+                            padding: 8,
+                            background: "#fafafa",
+                          }}
+                        >
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            第 {step.turn} 轮
+                          </Typography.Text>
+                          <pre style={{ ...expandedBlockStyle, border: "none", background: "transparent", margin: 0, padding: "4px 0" }}>
+                            {step.model_output}
+                          </pre>
+                          {step.action && (
+                            <div style={{ fontSize: 12 }}>
+                              <Tag color="blue">
+                                {step.action.tool}({JSON.stringify(step.action.args)})
+                              </Tag>
+                            </div>
+                          )}
+                          {step.observation !== undefined && (
+                            <div style={{ fontSize: 12, marginTop: 4 }}>
+                              <Typography.Text type="secondary">
+                                Observation: {step.observation}
+                              </Typography.Text>
+                            </div>
+                          )}
+                          {step.final_answer !== undefined && (
+                            <div style={{ marginTop: 4 }}>
+                              <Tag color="green">Final Answer</Tag>
+                              <Typography.Text>{step.final_answer}</Typography.Text>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {record.reference_answer && (
                   <div>
                     <Typography.Text strong>参考答案 / 评分标准</Typography.Text>

@@ -43,6 +43,8 @@ def _model_to_response(model: ModelConfig) -> ModelConfigResponse:
         api_key=_mask_key(model.api_key) if model.api_key else None,
         model_id=model.model_id,
         default_params=default_params,
+        input_price_per_million=model.input_price_per_million,
+        output_price_per_million=model.output_price_per_million,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
@@ -68,6 +70,8 @@ async def create_model(config: ModelConfigCreate, db: AsyncSession = Depends(get
         api_key=config.api_key,
         model_id=config.model_id,
         default_params=json.dumps(config.default_params),
+        input_price_per_million=config.input_price_per_million,
+        output_price_per_million=config.output_price_per_million,
         created_at=utcnow(),
         updated_at=utcnow(),
     )

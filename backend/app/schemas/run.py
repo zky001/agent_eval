@@ -40,8 +40,15 @@ class RunResponse(BaseModel):
     correct_tasks: int | None = None
     avg_latency_ms: float | None = None
     total_tokens: int | None = None
+    cost_usd: float | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskReviewRequest(BaseModel):
+    is_correct: bool
+    score: float | None = None  # defaults to 1.0 / 0.0 from is_correct
+    note: str | None = None
 
 
 class TaskResponse(BaseModel):

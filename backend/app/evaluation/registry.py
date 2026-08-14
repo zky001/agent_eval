@@ -1,3 +1,4 @@
+from app.evaluation.agent_loop import AgentLoopEvaluator
 from app.evaluation.api_interaction import APIInteractionEvaluator
 from app.evaluation.base import BaseEvaluator
 from app.evaluation.custom import CustomEvaluator
@@ -21,6 +22,7 @@ class EvaluatorRegistry:
         "multi_step": MultiStepEvaluator,
         "react": ReActEvaluator,
         "instruction_following": InstructionFollowingEvaluator,
+        "agent_loop": AgentLoopEvaluator,
         "api_interaction": APIInteractionEvaluator,
         "error_recovery": ErrorRecoveryEvaluator,
         # Scored by the run's judge model in the dispatcher; this entry is a

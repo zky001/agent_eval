@@ -1,5 +1,5 @@
 import client from "./client";
-import { LeaderboardEntry } from "../types";
+import { LeaderboardEntry, ScoreHistoryPoint } from "../types";
 
 export async function getLeaderboard(datasetId?: number | string): Promise<LeaderboardEntry[]> {
   const params: Record<string, unknown> = {};
@@ -18,5 +18,12 @@ export async function compareModels(modelIds: number[], datasetId?: number): Pro
     params.dataset_id = datasetId;
   }
   const response = await client.get<LeaderboardEntry[]>("/leaderboard/compare", { params });
+  return response.data;
+}
+
+export async function getScoreHistory(datasetId: number): Promise<ScoreHistoryPoint[]> {
+  const response = await client.get<ScoreHistoryPoint[]>("/leaderboard/history", {
+    params: { dataset_id: datasetId },
+  });
   return response.data;
 }

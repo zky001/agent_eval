@@ -16,17 +16,18 @@ import ModelsPage from "./pages/ModelsPage";
 import RunsListPage from "./pages/RunsListPage";
 import NewRunPage from "./pages/NewRunPage";
 import RunDetailPage from "./pages/RunDetailPage";
+import RunComparePage from "./pages/RunComparePage";
 import LeaderboardPage from "./pages/LeaderboardPage";
 
 const { Sider, Content, Header } = Layout;
 
 const menuItems = [
-  { key: "/", icon: <DashboardOutlined />, label: "Dashboard" },
-  { key: "/datasets", icon: <DatabaseOutlined />, label: "Datasets" },
-  { key: "/models", icon: <RobotOutlined />, label: "Models" },
-  { key: "/runs/new", icon: <PlusCircleOutlined />, label: "New Run" },
-  { key: "/runs", icon: <PlayCircleOutlined />, label: "Evaluation Runs" },
-  { key: "/leaderboard", icon: <TrophyOutlined />, label: "Leaderboard" },
+  { key: "/", icon: <DashboardOutlined />, label: "总览" },
+  { key: "/datasets", icon: <DatabaseOutlined />, label: "数据集" },
+  { key: "/models", icon: <RobotOutlined />, label: "模型管理" },
+  { key: "/runs/new", icon: <PlusCircleOutlined />, label: "新建评估" },
+  { key: "/runs", icon: <PlayCircleOutlined />, label: "评估运行" },
+  { key: "/leaderboard", icon: <TrophyOutlined />, label: "排行榜" },
 ];
 
 const App: React.FC = () => {
@@ -94,7 +95,7 @@ const App: React.FC = () => {
           }}
         >
           <Typography.Title level={4} style={{ margin: 0 }}>
-            Agent Evaluation Platform
+            Agent 评估平台
           </Typography.Title>
         </Header>
         <Content style={{ margin: 24, minHeight: 280 }}>
@@ -104,6 +105,7 @@ const App: React.FC = () => {
             <Route path="/datasets/:id" element={<DatasetDetailPage />} />
             <Route path="/models" element={<ModelsPage />} />
             <Route path="/runs/new" element={<NewRunPage />} />
+            <Route path="/runs/compare" element={<RunComparePage />} />
             <Route path="/runs" element={<RunsListPage />} />
             <Route path="/runs/:id" element={<RunDetailPage />} />
             <Route path="/leaderboard" element={<LeaderboardPage />} />

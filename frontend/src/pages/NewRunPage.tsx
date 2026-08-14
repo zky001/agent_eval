@@ -11,12 +11,13 @@ import {
   Input,
   Tag,
   Space,
+  Alert,
 } from "antd";
 import { ThunderboltOutlined } from "@ant-design/icons";
 import { listDatasets } from "../api/datasets";
 import { listModels } from "../api/models";
 import { createBatchRuns } from "../api/runs";
-import { Dataset, ModelConfig } from "../types";
+import { Dataset, ModelConfig, DATASET_TYPE_LABELS } from "../types";
 
 const NewRunPage: React.FC = () => {
   const navigate = useNavigate();
@@ -26,10 +27,14 @@ const NewRunPage: React.FC = () => {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [models, setModels] = useState<ModelConfig[]>([]);
 
-  // For preview count
   const datasetIds: number[] = Form.useWatch("dataset_ids", form) ?? [];
   const modelIds: number[] = Form.useWatch("model_config_ids", form) ?? [];
   const totalRuns = datasetIds.length * modelIds.length;
+
+  // 选中的数据集里包含 LLM 裁判类型时，必须指定裁判模型
+  const needsJudge = datasets.some(
+    (ds) => datasetIds.includes(ds.id) && ds.dataset_type === "llm_judge"
+  );
 
   useEffect(() => {
     const fetchData = async () => {
@@ -42,7 +47,7 @@ const NewRunPage: React.FC = () => {
         setDatasets(ds);
         setModels(ms);
       } catch {
-        message.error("Failed to load data");
+        message.error("加载数据失败");
       } finally {
         setLoading(false);
       }
@@ -53,6 +58,7 @@ const NewRunPage: React.FC = () => {
   const handleSubmit = async (values: {
     dataset_ids: number[];
     model_config_ids: number[];
+    judge_model_config_id?: number;
     params_override?: string;
   }) => {
     setSubmitting(true);
@@ -62,7 +68,7 @@ const NewRunPage: React.FC = () => {
         try {
           paramsOverride = JSON.parse(values.params_override);
         } catch {
-          message.error("Parameters Override 不是合法的 JSON");
+          message.error("参数覆盖不是合法的 JSON");
           setSubmitting(false);
           return;
         }
@@ -71,12 +77,12 @@ const NewRunPage: React.FC = () => {
       const runs = await createBatchRuns({
         dataset_ids: values.dataset_ids,
         model_config_ids: values.model_config_ids,
+        judge_model_config_id: values.judge_model_config_id,
         params_override: paramsOverride,
       });
 
       message.success(`成功创建 ${runs.length} 个评估任务`);
 
-      // If only one run was created, navigate directly to it; otherwise go to list
       if (runs.length === 1) {
         navigate(`/runs/${runs[0].id}`);
       } else {
@@ -84,9 +90,7 @@ const NewRunPage: React.FC = () => {
       }
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } };
-      message.error(
-        error.response?.data?.detail || "创建评估任务失败"
-      );
+      message.error(error.response?.data?.detail || "创建评估任务失败");
     } finally {
       setSubmitting(false);
     }
@@ -122,20 +126,18 @@ const NewRunPage: React.FC = () => {
               showSearch
               optionFilterProp="label"
               options={datasets.map((ds) => ({
-                label: `${ds.name} (${ds.total_items} items)`,
+                label: `${ds.name}（${DATASET_TYPE_LABELS[ds.dataset_type] || ds.dataset_type}，${ds.total_items} 题）`,
                 value: ds.id,
               }))}
               notFoundContent={
-                datasets.length === 0
-                  ? "暂无数据集，请先导入"
-                  : "无匹配结果"
+                datasets.length === 0 ? "暂无数据集，请先导入" : "无匹配结果"
               }
             />
           </Form.Item>
 
           <Form.Item
             name="model_config_ids"
-            label="模型（可多选）"
+            label="被评估模型（可多选）"
             rules={[{ required: true, message: "请至少选择一个模型" }]}
           >
             <Select
@@ -148,12 +150,36 @@ const NewRunPage: React.FC = () => {
                 value: m.id,
               }))}
               notFoundContent={
-                models.length === 0
-                  ? "暂无模型配置，请先添加"
-                  : "无匹配结果"
+                models.length === 0 ? "暂无模型配置，请先添加" : "无匹配结果"
               }
             />
           </Form.Item>
+
+          {needsJudge && (
+            <>
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message="所选数据集包含「LLM 裁判评分」类型，需要指定一个裁判模型来给回答打分。建议使用能力较强的模型作裁判。"
+              />
+              <Form.Item
+                name="judge_model_config_id"
+                label="裁判模型"
+                rules={[{ required: true, message: "请选择裁判模型" }]}
+              >
+                <Select
+                  placeholder="选择用于打分的裁判模型"
+                  showSearch
+                  optionFilterProp="label"
+                  options={models.map((m) => ({
+                    label: `${m.name} (${m.provider} / ${m.model_id})`,
+                    value: m.id,
+                  }))}
+                />
+              </Form.Item>
+            </>
+          )}
 
           {totalRuns > 0 && (
             <Form.Item>
@@ -169,7 +195,7 @@ const NewRunPage: React.FC = () => {
           <Form.Item
             name="params_override"
             label="参数覆盖（JSON，可选）"
-            help="覆盖所有任务的默认模型参数，例如 temperature、max_tokens 等。"
+            help='覆盖所有任务的默认模型参数，例如 {"temperature": 0, "max_tokens": 512}。也支持 "system"（系统提示词）和 "timeout"（超时秒数）。'
             rules={[
               {
                 validator: (_, value) => {
@@ -200,9 +226,7 @@ const NewRunPage: React.FC = () => {
               block
               disabled={totalRuns === 0}
             >
-              {totalRuns > 1
-                ? `批量启动 ${totalRuns} 个评估任务`
-                : "启动评估"}
+              {totalRuns > 1 ? `批量启动 ${totalRuns} 个评估任务` : "启动评估"}
             </Button>
           </Form.Item>
         </Form>

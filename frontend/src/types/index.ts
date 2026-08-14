@@ -33,6 +33,7 @@ export interface EvaluationRun {
   name?: string;
   dataset_id: number;
   model_config_id: number;
+  judge_model_config_id?: number;
   dataset_name?: string;
   model_name?: string;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -73,3 +74,47 @@ export interface LeaderboardEntry {
   completed_runs: number;
   avg_latency: number;
 }
+
+export interface CompareItemResult {
+  status: string;
+  raw_response?: string;
+  parsed_answer?: string;
+  is_correct?: boolean;
+  score?: number;
+  latency_ms?: number;
+}
+
+export interface CompareItem {
+  item_index: number;
+  prompt: string;
+  reference_answer?: string;
+  results: Record<string, CompareItemResult>;
+}
+
+export interface CompareData {
+  runs: EvaluationRun[];
+  items: CompareItem[];
+}
+
+/** 评估类型的中文名，全站统一使用 */
+export const DATASET_TYPE_LABELS: Record<string, string> = {
+  gsm8k: "数学推理 (GSM8K)",
+  mmlu: "综合知识 (MMLU)",
+  humaneval: "代码生成 (HumanEval)",
+  tool_use: "工具调用",
+  multi_step: "多步规划",
+  react: "ReAct 推理",
+  instruction_following: "指令遵循",
+  api_interaction: "API 交互",
+  error_recovery: "错误恢复",
+  llm_judge: "LLM 裁判评分",
+  custom: "自定义",
+};
+
+export const RUN_STATUS_LABELS: Record<string, string> = {
+  pending: "等待中",
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
+};

@@ -13,6 +13,7 @@ export async function getDataset(id: number): Promise<Dataset> {
 
 export async function importDataset(params: {
   source: string;
+  origin?: "sample" | "huggingface";
   split?: string;
   max_items?: number;
 }): Promise<Dataset> {
@@ -24,6 +25,7 @@ export async function uploadDataset(data: {
   name: string;
   dataset_type?: string;
   description?: string;
+  system_prompt?: string;
   items: { prompt: string; reference_answer?: string; metadata?: Record<string, unknown> }[];
 }): Promise<Dataset> {
   const response = await client.post<Dataset>("/datasets/upload", data);

@@ -21,9 +21,11 @@ import {
   CloseCircleFilled,
   StopOutlined,
   ReloadOutlined,
+  DownloadOutlined,
+  RedoOutlined,
 } from "@ant-design/icons";
-import { getRun, getRunTasks, cancelRun } from "../api/runs";
-import { EvaluationRun, TaskResult } from "../types";
+import { getRun, getRunTasks, cancelRun, retryRun, exportRunUrl } from "../api/runs";
+import { EvaluationRun, TaskResult, RUN_STATUS_LABELS } from "../types";
 
 const statusColors: Record<string, string> = {
   pending: "default",
@@ -31,6 +33,14 @@ const statusColors: Record<string, string> = {
   completed: "success",
   failed: "error",
   cancelled: "warning",
+};
+
+const taskStatusLabels: Record<string, string> = {
+  pending: "等待中",
+  running: "运行中",
+  completed: "已完成",
+  failed: "失败",
+  cancelled: "已取消",
 };
 
 const expandedBlockStyle: React.CSSProperties = {
@@ -66,7 +76,7 @@ const RunDetailPage: React.FC = () => {
       setRun(data);
       return data;
     } catch {
-      message.error("Failed to load run details");
+      message.error("加载运行详情失败");
       return null;
     }
   }, [id]);
@@ -80,7 +90,7 @@ const RunDetailPage: React.FC = () => {
       setTasks(result.tasks);
       setTasksTotal(result.total);
     } catch {
-      message.error("Failed to load task results");
+      message.error("加载任务结果失败");
     } finally {
       setTasksLoading(false);
     }
@@ -99,7 +109,7 @@ const RunDetailPage: React.FC = () => {
     fetchTasks();
   }, [fetchTasks]);
 
-  // Auto-refresh while running or pending
+  // 运行中自动刷新
   useEffect(() => {
     if (run && (run.status === "running" || run.status === "pending")) {
       intervalRef.current = setInterval(async () => {
@@ -131,10 +141,23 @@ const RunDetailPage: React.FC = () => {
     if (!id) return;
     try {
       await cancelRun(Number(id));
-      message.success("Run cancelled");
+      message.success("已取消运行");
       fetchRun();
     } catch {
-      message.error("Failed to cancel run");
+      message.error("取消失败");
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!id) return;
+    try {
+      await retryRun(Number(id));
+      message.success("已重新提交失败任务");
+      fetchRun();
+      fetchTasks();
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      message.error(error.response?.data?.detail || "重跑失败");
     }
   };
 
@@ -151,7 +174,7 @@ const RunDetailPage: React.FC = () => {
       width: 60,
     },
     {
-      title: "Prompt",
+      title: "题目",
       dataIndex: "prompt",
       key: "prompt",
       ellipsis: true,
@@ -166,7 +189,7 @@ const RunDetailPage: React.FC = () => {
       },
     },
     {
-      title: "Reference",
+      title: "参考答案",
       dataIndex: "reference_answer",
       key: "reference_answer",
       width: 150,
@@ -180,7 +203,7 @@ const RunDetailPage: React.FC = () => {
       },
     },
     {
-      title: "Model Response",
+      title: "模型响应",
       dataIndex: "raw_response",
       key: "raw_response",
       width: 200,
@@ -194,35 +217,32 @@ const RunDetailPage: React.FC = () => {
       },
     },
     {
-      title: "Parsed",
+      title: "解析结果",
       dataIndex: "parsed_answer",
       key: "parsed_answer",
       width: 100,
+      ellipsis: true,
       render: (text: string) => text || "--",
     },
     {
-      title: "Correct",
+      title: "判定",
       dataIndex: "is_correct",
       key: "is_correct",
       width: 80,
       align: "center" as const,
       render: (val: boolean | undefined, record: TaskResult) => {
-        if (record.status === "pending") return <Tag>PENDING</Tag>;
-        if (record.status === "failed")
-          return <Tag color="error">FAILED</Tag>;
+        if (record.status === "pending") return <Tag>等待</Tag>;
+        if (record.status === "failed") return <Tag color="error">失败</Tag>;
+        if (record.status === "cancelled") return <Tag color="warning">取消</Tag>;
         if (val === true)
-          return (
-            <CheckCircleFilled style={{ color: "#52c41a", fontSize: 18 }} />
-          );
+          return <CheckCircleFilled style={{ color: "#52c41a", fontSize: 18 }} />;
         if (val === false)
-          return (
-            <CloseCircleFilled style={{ color: "#ff4d4f", fontSize: 18 }} />
-          );
+          return <CloseCircleFilled style={{ color: "#ff4d4f", fontSize: 18 }} />;
         return "--";
       },
     },
     {
-      title: "Score",
+      title: "得分",
       dataIndex: "score",
       key: "score",
       width: 80,
@@ -230,7 +250,7 @@ const RunDetailPage: React.FC = () => {
         val !== undefined && val !== null ? val.toFixed(2) : "--",
     },
     {
-      title: "Latency",
+      title: "延迟",
       dataIndex: "latency_ms",
       key: "latency_ms",
       width: 90,
@@ -250,12 +270,14 @@ const RunDetailPage: React.FC = () => {
   if (!run) {
     return (
       <div style={{ textAlign: "center", paddingTop: 100 }}>
-        <Typography.Text type="secondary">Run not found</Typography.Text>
+        <Typography.Text type="secondary">运行不存在</Typography.Text>
       </div>
     );
   }
 
   const isActive = run.status === "running" || run.status === "pending";
+  const canRetry =
+    !isActive && (run.failed_tasks > 0 || run.status === "cancelled");
 
   return (
     <div>
@@ -266,7 +288,7 @@ const RunDetailPage: React.FC = () => {
           onClick={() => navigate("/runs")}
           style={{ padding: 0 }}
         >
-          Back to Runs
+          返回运行列表
         </Button>
       </div>
 
@@ -280,24 +302,42 @@ const RunDetailPage: React.FC = () => {
           }}
         >
           <Typography.Title level={4} style={{ margin: 0 }}>
-            {run.name || `Run #${run.id}`}
+            {run.name || `运行 #${run.id}`}
           </Typography.Title>
-          <Space>
+          <Space wrap>
             {isActive && (
-              <Tag color={statusColors[run.status]} style={{ fontSize: 14, padding: "4px 12px" }}>
-                {run.status.toUpperCase()}
+              <Tag
+                color={statusColors[run.status]}
+                style={{ fontSize: 14, padding: "4px 12px" }}
+              >
+                {RUN_STATUS_LABELS[run.status]}
               </Tag>
             )}
             {isActive && (
-              <Popconfirm
-                title="Cancel this evaluation run?"
-                onConfirm={handleCancel}
-              >
+              <Popconfirm title="取消这个评估运行？" onConfirm={handleCancel}>
                 <Button danger icon={<StopOutlined />}>
-                  Cancel Run
+                  取消运行
                 </Button>
               </Popconfirm>
             )}
+            {canRetry && (
+              <Popconfirm
+                title="重跑失败/取消的任务？"
+                description="已完成的任务保持不变。"
+                onConfirm={handleRetry}
+              >
+                <Button type="primary" ghost icon={<RedoOutlined />}>
+                  重跑失败任务
+                </Button>
+              </Popconfirm>
+            )}
+            <Button
+              icon={<DownloadOutlined />}
+              href={exportRunUrl(run.id)}
+              target="_blank"
+            >
+              导出 CSV
+            </Button>
             <Button
               icon={<ReloadOutlined />}
               onClick={() => {
@@ -305,26 +345,30 @@ const RunDetailPage: React.FC = () => {
                 fetchTasks();
               }}
             >
-              Refresh
+              刷新
             </Button>
           </Space>
         </div>
 
         <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 3 }}>
-          <Descriptions.Item label="Dataset">
+          <Descriptions.Item label="数据集">
             {run.dataset_name || `#${run.dataset_id}`}
           </Descriptions.Item>
-          <Descriptions.Item label="Model">
+          <Descriptions.Item label="模型">
             {run.model_name || `#${run.model_config_id}`}
           </Descriptions.Item>
-          <Descriptions.Item label="Status">
+          <Descriptions.Item label="状态">
             <Tag color={statusColors[run.status] || "default"}>
-              {run.status.toUpperCase()}
+              {RUN_STATUS_LABELS[run.status] || run.status}
             </Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="Progress">
+          <Descriptions.Item label="进度">
             <Progress
-              percent={run.total_tasks > 0 ? Math.round((run.completed_tasks / run.total_tasks) * 100) : 0}
+              percent={
+                run.total_tasks > 0
+                  ? Math.round((run.completed_tasks / run.total_tasks) * 100)
+                  : 0
+              }
               status={
                 run.status === "failed"
                   ? "exception"
@@ -335,44 +379,44 @@ const RunDetailPage: React.FC = () => {
               style={{ width: 200 }}
             />
           </Descriptions.Item>
-          <Descriptions.Item label="Tasks">
-            {run.completed_tasks} / {run.total_tasks} completed
+          <Descriptions.Item label="任务">
+            {run.completed_tasks} / {run.total_tasks} 完成
+            {run.failed_tasks > 0 && (
+              <Typography.Text type="danger" style={{ marginLeft: 8 }}>
+                {run.failed_tasks} 失败
+              </Typography.Text>
+            )}
           </Descriptions.Item>
-          <Descriptions.Item label="Failed">
-            {run.failed_tasks}
-          </Descriptions.Item>
-          <Descriptions.Item label="Score">
+          <Descriptions.Item label="综合得分">
             {run.aggregate_score !== undefined && run.aggregate_score !== null
               ? `${(run.aggregate_score * 100).toFixed(1)}%`
               : "--"}
           </Descriptions.Item>
-          <Descriptions.Item label="Correct">
+          <Descriptions.Item label="正确数">
             {run.correct_tasks !== undefined && run.correct_tasks !== null
               ? `${run.correct_tasks} / ${run.total_tasks}`
               : "--"}
           </Descriptions.Item>
-          <Descriptions.Item label="Avg Latency">
+          <Descriptions.Item label="平均延迟">
             {run.avg_latency_ms !== undefined && run.avg_latency_ms !== null
               ? `${Math.round(run.avg_latency_ms)}ms`
               : "--"}
           </Descriptions.Item>
-          <Descriptions.Item label="Tokens">
+          <Descriptions.Item label="Token 总量">
             {run.total_tokens !== undefined && run.total_tokens !== null
               ? run.total_tokens.toLocaleString()
               : "--"}
           </Descriptions.Item>
-          <Descriptions.Item label="Started">
-            {run.started_at
-              ? new Date(run.started_at).toLocaleString()
-              : "--"}
+          <Descriptions.Item label="开始时间">
+            {run.started_at ? new Date(run.started_at).toLocaleString() : "--"}
           </Descriptions.Item>
           {run.completed_at && (
-            <Descriptions.Item label="Completed">
+            <Descriptions.Item label="结束时间">
               {new Date(run.completed_at).toLocaleString()}
             </Descriptions.Item>
           )}
           {run.error_message && (
-            <Descriptions.Item label="Error" span={3}>
+            <Descriptions.Item label="错误信息" span={3}>
               <Typography.Text type="danger">{run.error_message}</Typography.Text>
             </Descriptions.Item>
           )}
@@ -380,19 +424,19 @@ const RunDetailPage: React.FC = () => {
       </Card>
 
       <Card
-        title="Task Results"
+        title="任务结果"
         extra={
           <Space>
-            <Typography.Text type="secondary">Filter:</Typography.Text>
+            <Typography.Text type="secondary">筛选：</Typography.Text>
             <Select
               value={filter}
               onChange={handleFilterChange}
               style={{ width: 140 }}
               options={[
-                { label: "All", value: "all" },
-                { label: "Correct", value: "correct" },
-                { label: "Incorrect", value: "incorrect" },
-                { label: "Failed", value: "failed" },
+                { label: "全部", value: "all" },
+                { label: "正确", value: "correct" },
+                { label: "错误", value: "incorrect" },
+                { label: "失败", value: "failed" },
               ]}
             />
           </Space>
@@ -408,35 +452,29 @@ const RunDetailPage: React.FC = () => {
             expandedRowRender: (record: TaskResult) => (
               <div style={{ display: "grid", gap: 12 }}>
                 <div>
-                  <Typography.Text strong>Prompt</Typography.Text>
+                  <Typography.Text strong>题目</Typography.Text>
                   <pre style={expandedBlockStyle}>{record.prompt || "--"}</pre>
                 </div>
                 {record.reference_answer && (
                   <div>
-                    <Typography.Text strong>Reference Answer</Typography.Text>
-                    <pre style={expandedBlockStyle}>
-                      {record.reference_answer}
-                    </pre>
+                    <Typography.Text strong>参考答案 / 评分标准</Typography.Text>
+                    <pre style={expandedBlockStyle}>{record.reference_answer}</pre>
                   </div>
                 )}
                 <div>
-                  <Typography.Text strong>Model Response</Typography.Text>
-                  <pre style={expandedBlockStyle}>
-                    {record.raw_response || "--"}
-                  </pre>
+                  <Typography.Text strong>模型响应</Typography.Text>
+                  <pre style={expandedBlockStyle}>{record.raw_response || "--"}</pre>
                 </div>
                 {record.parsed_answer && (
                   <div>
-                    <Typography.Text strong>Parsed Answer</Typography.Text>
+                    <Typography.Text strong>解析结果</Typography.Text>
                     <pre style={expandedBlockStyle}>{record.parsed_answer}</pre>
                   </div>
                 )}
                 {record.evaluation_details &&
                   Object.keys(record.evaluation_details).length > 0 && (
                     <div>
-                      <Typography.Text strong>
-                        Evaluation Details
-                      </Typography.Text>
+                      <Typography.Text strong>评分细节</Typography.Text>
                       <pre style={expandedBlockStyle}>
                         {JSON.stringify(record.evaluation_details, null, 2)}
                       </pre>
@@ -450,13 +488,13 @@ const RunDetailPage: React.FC = () => {
             pageSize: pageSize,
             total: tasksTotal,
             showSizeChanger: true,
-            showTotal: (t) => `Total ${t} results`,
+            showTotal: (t) => `共 ${t} 条结果`,
             onChange: (p, ps) => {
               setPage(p);
               setPageSize(ps);
             },
           }}
-          locale={{ emptyText: "No task results yet" }}
+          locale={{ emptyText: "暂无任务结果" }}
         />
       </Card>
     </div>

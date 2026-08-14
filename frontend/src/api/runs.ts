@@ -1,5 +1,5 @@
 import client from "./client";
-import { EvaluationRun, TaskResult } from "../types";
+import { CompareData, EvaluationRun, TaskResult } from "../types";
 
 export async function listRuns(): Promise<EvaluationRun[]> {
   const response = await client.get<EvaluationRun[]>("/runs");
@@ -9,6 +9,7 @@ export async function listRuns(): Promise<EvaluationRun[]> {
 export async function createRun(data: {
   dataset_id: number;
   model_config_id: number;
+  judge_model_config_id?: number;
   name?: string;
   params_override?: Record<string, unknown>;
 }): Promise<EvaluationRun> {
@@ -19,6 +20,7 @@ export async function createRun(data: {
 export async function createBatchRuns(data: {
   dataset_ids: number[];
   model_config_ids: number[];
+  judge_model_config_id?: number;
   params_override?: Record<string, unknown>;
 }): Promise<EvaluationRun[]> {
   const response = await client.post<EvaluationRun[]>("/runs/batch", data);
@@ -55,6 +57,22 @@ export async function cancelRun(id: number): Promise<void> {
   await client.post(`/runs/${id}/cancel`);
 }
 
+export async function retryRun(id: number): Promise<EvaluationRun> {
+  const response = await client.post<EvaluationRun>(`/runs/${id}/retry`);
+  return response.data;
+}
+
 export async function deleteRun(id: number): Promise<void> {
   await client.delete(`/runs/${id}`);
+}
+
+export function exportRunUrl(id: number): string {
+  return `/api/runs/${id}/export`;
+}
+
+export async function compareRuns(runIds: number[]): Promise<CompareData> {
+  const response = await client.get<CompareData>("/runs/compare-items", {
+    params: { run_ids: runIds.join(",") },
+  });
+  return response.data;
 }
